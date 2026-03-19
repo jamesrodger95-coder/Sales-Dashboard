@@ -2,36 +2,48 @@
 
 let cachedAccessToken: string | null = null;
 let tokenExpiry = 0;
+let refreshPromise: Promise<string> | null = null;
 
 async function getAccessToken(): Promise<string> {
   if (cachedAccessToken && Date.now() < tokenExpiry) {
     return cachedAccessToken;
   }
 
-  console.log('[Calendar] Refreshing access token...');
+  // Deduplicate concurrent refresh calls — all callers share one promise
+  if (refreshPromise) return refreshPromise;
 
-  const res = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: process.env.GOOGLE_CLIENT_ID || '',
-      client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
-      refresh_token: process.env.GOOGLE_REFRESH_TOKEN || '',
-      grant_type: 'refresh_token',
-    }),
-  });
+  refreshPromise = (async () => {
+    console.log('[Calendar] Refreshing access token...');
 
-  const data = await res.json();
+    const res = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: process.env.GOOGLE_CLIENT_ID || '',
+        client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
+        refresh_token: process.env.GOOGLE_REFRESH_TOKEN || '',
+        grant_type: 'refresh_token',
+      }),
+    });
 
-  if (data.error) {
-    console.error('[Calendar] Token error:', data);
-    throw new Error(`Google OAuth error: ${data.error_description || data.error}`);
+    const data = await res.json();
+
+    if (data.error) {
+      console.error('[Calendar] Token error:', data);
+      throw new Error(`Google OAuth error: ${data.error_description || data.error}`);
+    }
+
+    cachedAccessToken = data.access_token;
+    tokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
+    console.log('[Calendar] Got access token:', data.access_token?.substring(0, 20) + '...');
+    return data.access_token;
+  })();
+
+  try {
+    return await refreshPromise;
+  } finally {
+    refreshPromise = null;
   }
-
-  cachedAccessToken = data.access_token;
-  tokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
-  console.log('[Calendar] Got access token:', data.access_token?.substring(0, 20) + '...');
-  return data.access_token;
 }
 
 export interface CalendarEvent {

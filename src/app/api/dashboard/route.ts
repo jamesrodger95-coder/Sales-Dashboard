@@ -10,32 +10,38 @@ export async function GET() {
   try {
     const now = new Date();
 
+    // Fetch ONE range covering the whole month + 7 days ahead, then filter locally
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
-    const tomorrowStart = new Date(todayStart); tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-    const tomorrowEnd = new Date(todayEnd); tomorrowEnd.setDate(tomorrowEnd.getDate() + 1);
-    const weekStart = new Date(now); weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1); weekStart.setHours(0, 0, 0, 0);
-    const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6); weekEnd.setHours(23, 59, 59);
     const sevenDaysAhead = new Date(now.getTime() + 7 * 86400000);
+    const fetchEnd = sevenDaysAhead > new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59)
+      ? sevenDaysAhead : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
     console.log('[Dashboard] Fetching calendar data...');
+    const allEvents = await fetchCalendarEvents(monthStart.toISOString(), fetchEnd.toISOString());
 
-    const [monthEvents, todayEvents, tomorrowEvents, weekEvents, upcomingEvents] = await Promise.all([
-      fetchCalendarEvents(monthStart.toISOString(), monthEnd.toISOString()),
-      fetchCalendarEvents(todayStart.toISOString(), todayEnd.toISOString()),
-      fetchCalendarEvents(tomorrowStart.toISOString(), tomorrowEnd.toISOString()),
-      fetchCalendarEvents(weekStart.toISOString(), weekEnd.toISOString()),
-      fetchCalendarEvents(now.toISOString(), sevenDaysAhead.toISOString()),
-    ]);
+    // Date boundaries
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayEnd = new Date(todayStart.getTime() + 86400000);
+    const tomorrowEnd = new Date(todayEnd.getTime() + 86400000);
+    const weekStart = new Date(now);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
+    weekStart.setHours(0, 0, 0, 0);
+    const weekEnd = new Date(weekStart.getTime() + 7 * 86400000);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
+    // Filter locally
+    const inRange = (e: CalendarEvent, start: Date, end: Date) => {
+      const d = new Date(e.start);
+      return d >= start && d < end;
+    };
+
+    const monthEvents = allEvents.filter(e => inRange(e, monthStart, monthEnd));
     const monthlySalesCalls = monthEvents.filter(isSalesCall);
     const monthlyCancellations = monthEvents.filter(isCancelled);
-    const weekSalesCalls = weekEvents.filter(isSalesCall);
-    const upcomingDemos = upcomingEvents.filter(isSalesCall);
+    const weekSalesCalls = allEvents.filter(e => inRange(e, weekStart, weekEnd)).filter(isSalesCall);
+    const upcomingDemos = allEvents.filter(e => inRange(e, now, sevenDaysAhead)).filter(isSalesCall);
 
-    // Call list with proper names
+    // Call list
     const calls = monthlySalesCalls.map(e => {
       const country = extractCountry(e);
       const city = extractCity(e);
@@ -50,7 +56,7 @@ export async function GET() {
       };
     });
 
-    // Build rich schedule items
+    // Schedule items
     const buildScheduleItem = (e: CalendarEvent) => {
       const n = extractMeetingNotes(e);
       const loc = [n.country, n.city].filter(Boolean).join(', ');
@@ -67,10 +73,10 @@ export async function GET() {
       };
     };
 
-    const todaySchedule = todayEvents.filter(isSalesCall).map(buildScheduleItem);
-    const tomorrowSchedule = tomorrowEvents.filter(isSalesCall).map(buildScheduleItem);
+    const todaySchedule = allEvents.filter(e => inRange(e, todayStart, todayEnd)).filter(isSalesCall).map(buildScheduleItem);
+    const tomorrowSchedule = allEvents.filter(e => inRange(e, todayEnd, tomorrowEnd)).filter(isSalesCall).map(buildScheduleItem);
 
-    console.log(`[Dashboard] Sales calls: ${monthlySalesCalls.length}, Cancellations: ${monthlyCancellations.length}`);
+    console.log(`[Dashboard] Sales calls: ${monthlySalesCalls.length}, Cancellations: ${monthlyCancellations.length}, Today: ${todaySchedule.length}, Tomorrow: ${tomorrowSchedule.length}`);
 
     return NextResponse.json({
       kpis: {
