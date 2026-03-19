@@ -19,9 +19,16 @@ export default function AnalyticsPage() {
   const loadData = useCallback(async (r: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/analytics?range=${r}`);
-      const d = await res.json();
-      if (!d.error) setData(d);
+      if (r === '3m') {
+        // Use dashboard endpoint which includes analytics (avoids token issues)
+        const res = await fetch('/api/dashboard');
+        const d = await res.json();
+        if (!d.error && d.analytics) setData(d.analytics);
+      } else {
+        const res = await fetch(`/api/analytics?range=${r}`);
+        const d = await res.json();
+        if (!d.error) setData(d);
+      }
     } catch { /* handled by empty data */ }
     finally { setLoading(false); }
   }, []);

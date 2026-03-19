@@ -6,20 +6,35 @@ import {
 
 export const dynamic = 'force-dynamic';
 
+function getWeekRange(date: Date): string {
+  const start = new Date(date);
+  start.setDate(start.getDate() - start.getDay() + 1);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 4);
+  const fmt = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return `${fmt(start)} - ${fmt(end)}`;
+}
+
+function getTimeSlot(hour: number): 'morning' | 'afternoon' | 'late' {
+  if (hour < 12) return 'morning';
+  if (hour < 16) return 'afternoon';
+  return 'late';
+}
+
 export async function GET() {
   try {
     const now = new Date();
 
-    // Fetch ONE range covering the whole month + 7 days ahead, then filter locally
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    // Single fetch: 3 months back to 7 days ahead — covers dashboard + analytics
+    const threeMonthsAgo = new Date(now.getTime() - 90 * 86400000);
     const sevenDaysAhead = new Date(now.getTime() + 7 * 86400000);
-    const fetchEnd = sevenDaysAhead > new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59)
-      ? sevenDaysAhead : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
-    console.log('[Dashboard] Fetching calendar data...');
-    const allEvents = await fetchCalendarEvents(monthStart.toISOString(), fetchEnd.toISOString());
+    console.log('[Dashboard] Fetching calendar data (single call)...');
+    const allEvents = await fetchCalendarEvents(threeMonthsAgo.toISOString(), sevenDaysAhead.toISOString());
 
     // Date boundaries
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayEnd = new Date(todayStart.getTime() + 86400000);
     const tomorrowEnd = new Date(todayEnd.getTime() + 86400000);
@@ -27,46 +42,41 @@ export async function GET() {
     weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
     weekStart.setHours(0, 0, 0, 0);
     const weekEnd = new Date(weekStart.getTime() + 7 * 86400000);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
-    // Filter locally
     const inRange = (e: CalendarEvent, start: Date, end: Date) => {
       const d = new Date(e.start);
       return d >= start && d < end;
     };
 
+    // === DASHBOARD DATA ===
     const monthEvents = allEvents.filter(e => inRange(e, monthStart, monthEnd));
     const monthlySalesCalls = monthEvents.filter(isSalesCall);
     const monthlyCancellations = monthEvents.filter(isCancelled);
     const weekSalesCalls = allEvents.filter(e => inRange(e, weekStart, weekEnd)).filter(isSalesCall);
     const upcomingDemos = allEvents.filter(e => inRange(e, now, sevenDaysAhead)).filter(isSalesCall);
 
-    // Call list
     const calls = monthlySalesCalls.map(e => {
       const country = extractCountry(e);
       const city = extractCity(e);
-      const location = [country, city].filter(Boolean).join(', ');
       return {
         name: extractLeadName(e),
         email: getExternalAttendeeEmail(e),
         phone: extractPhone(e),
         date: e.start,
-        country: location || null,
+        country: [country, city].filter(Boolean).join(', ') || null,
         eventTitle: e.summary,
       };
     });
 
-    // Schedule items
     const buildScheduleItem = (e: CalendarEvent) => {
       const n = extractMeetingNotes(e);
-      const loc = [n.country, n.city].filter(Boolean).join(', ');
       return {
         time: new Date(e.start).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London' }),
         name: extractLeadName(e),
         email: getExternalAttendeeEmail(e),
         phone: extractPhone(e),
         type: 'demo',
-        location: loc || null,
+        location: [n.country, n.city].filter(Boolean).join(', ') || null,
         notes: n.notes || null,
         attendanceConfirmed: n.attendanceConfirmed ?? null,
         rescheduleReason: n.rescheduleReason || null,
@@ -76,7 +86,53 @@ export async function GET() {
     const todaySchedule = allEvents.filter(e => inRange(e, todayStart, todayEnd)).filter(isSalesCall).map(buildScheduleItem);
     const tomorrowSchedule = allEvents.filter(e => inRange(e, todayEnd, tomorrowEnd)).filter(isSalesCall).map(buildScheduleItem);
 
-    console.log(`[Dashboard] Sales calls: ${monthlySalesCalls.length}, Cancellations: ${monthlyCancellations.length}, Today: ${todaySchedule.length}, Tomorrow: ${tomorrowSchedule.length}`);
+    // === ANALYTICS DATA (computed from same events, no extra API calls) ===
+    const salesCalls = allEvents.filter(isSalesCall);
+    const cancelled = allEvents.filter(isCancelled);
+
+    // Weekly volume
+    const weekMap = new Map<string, { calls: number; isCurrent: boolean }>();
+    for (let i = 13; i >= 0; i--) {
+      const weekDate = new Date(now.getTime() - i * 7 * 86400000);
+      const label = getWeekRange(weekDate);
+      if (!weekMap.has(label)) weekMap.set(label, { calls: 0, isCurrent: i === 0 });
+    }
+    for (const event of salesCalls) {
+      const label = getWeekRange(new Date(event.start));
+      if (weekMap.has(label)) weekMap.get(label)!.calls++;
+    }
+    const weeklyVolume = Array.from(weekMap.entries()).map(([week, data]) => ({
+      week, calls: data.calls, isCurrent: data.isCurrent,
+    }));
+
+    // Day breakdown
+    const dayBreakdown: Record<string, number> = { Monday: 0, Tuesday: 0, Wednesday: 0, Thursday: 0, Friday: 0, Saturday: 0, Sunday: 0 };
+    for (const event of salesCalls) {
+      const day = new Date(event.start).toLocaleDateString('en-GB', { weekday: 'long' });
+      if (day in dayBreakdown) dayBreakdown[day]++;
+    }
+
+    // Time slots
+    const timeSlots = { morning: 0, afternoon: 0, late: 0 };
+    for (const event of salesCalls) {
+      timeSlots[getTimeSlot(new Date(event.start).getHours())]++;
+    }
+
+    // Monthly comparison
+    const monthlyComparison: { month: string; calls: number; isCurrent: boolean }[] = [];
+    for (let i = 3; i >= 0; i--) {
+      const mDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const mEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59);
+      const label = mDate.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+      const count = salesCalls.filter(e => { const d = new Date(e.start); return d >= mDate && d <= mEnd; }).length;
+      monthlyComparison.push({ month: label, calls: count, isCurrent: i === 0 });
+    }
+
+    const busiestDay = Object.entries(dayBreakdown).sort(([, a], [, b]) => b - a)[0]?.[0] || 'N/A';
+    const timeLabels = { morning: 'Morning (8-12)', afternoon: 'Afternoon (12-4)', late: 'Late (4-6)' };
+    const busiestTime = Object.entries(timeSlots).sort(([, a], [, b]) => b - a)[0]?.[0] as keyof typeof timeLabels || 'morning';
+
+    console.log(`[Dashboard] Sales calls: ${monthlySalesCalls.length}, Total 3mo: ${salesCalls.length}, Today: ${todaySchedule.length}, Tomorrow: ${tomorrowSchedule.length}`);
 
     return NextResponse.json({
       kpis: {
@@ -89,6 +145,13 @@ export async function GET() {
       todaySchedule,
       tomorrowSchedule,
       month: now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
+      // Analytics data included
+      analytics: {
+        weeklyVolume, dayBreakdown, timeSlots, monthlyComparison,
+        busiestDay, busiestTime: timeLabels[busiestTime],
+        totalCancellations: cancelled.length,
+        totalCalls: salesCalls.length,
+      },
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Dashboard data failed';

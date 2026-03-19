@@ -30,18 +30,18 @@ export default function Dashboard() {
     setLoading(true);
     setSyncState('syncing');
     try {
-      const [dashRes, analyticsRes] = await Promise.allSettled([
-        fetch('/api/dashboard').then(r => r.json()),
-        fetch('/api/analytics?range=3m').then(r => r.json()),
-      ]);
-      let ok = false;
-      if (dashRes.status === 'fulfilled' && !dashRes.value.error) { setDashboard(dashRes.value); ok = true; }
-      if (analyticsRes.status === 'fulfilled' && !analyticsRes.value.error) { setAnalytics(analyticsRes.value); ok = true; }
-      setSyncState(ok ? 'synced' : 'error');
+      const data = await fetch('/api/dashboard').then(r => r.json());
+      if (data.error) throw new Error(data.error);
+      setDashboard(data);
+      if (data.analytics) setAnalytics(data.analytics);
+      setSyncState('synced');
       if (syncedTimer.current) clearTimeout(syncedTimer.current);
-      if (ok) syncedTimer.current = setTimeout(() => setSyncState('idle'), 2500);
-    } catch { setSyncState('error'); }
-    finally { setLoading(false); }
+      syncedTimer.current = setTimeout(() => setSyncState('idle'), 2500);
+    } catch {
+      setSyncState('error');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { loadData(); return () => { if (syncedTimer.current) clearTimeout(syncedTimer.current); }; }, [loadData]);

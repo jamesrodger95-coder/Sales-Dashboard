@@ -17,6 +17,7 @@ async function getAccessToken(): Promise<string> {
 
     const res = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
+      cache: 'no-store',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         client_id: process.env.GOOGLE_CLIENT_ID || '',
@@ -270,38 +271,51 @@ export async function fetchCalendarEvents(
   timeMin: string,
   timeMax: string
 ): Promise<CalendarEvent[]> {
-  const accessToken = await getAccessToken();
-
   const params = new URLSearchParams({
     timeMin, timeMax, maxResults: '500', singleEvents: 'true', orderBy: 'startTime',
   });
-
   const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`;
   console.log(`[Calendar] Fetching events: ${timeMin} to ${timeMax}`);
 
-  const res = await fetch(url, {
-    headers: { 'Authorization': `Bearer ${accessToken}` },
-  });
+  // Try with current token, retry once with fresh token on 401
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const accessToken = await getAccessToken();
+    const res = await fetch(url, {
+      cache: 'no-store',
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+    });
 
-  const data = await res.json();
+    if (res.status === 401 && attempt === 0) {
+      console.log('[Calendar] Got 401, refreshing token and retrying...');
+      cachedAccessToken = null;
+      tokenExpiry = 0;
+      continue;
+    }
 
-  if (data.error) {
-    console.error('[Calendar] API error:', data.error);
-    throw new Error(`Calendar API: ${data.error.message || data.error}`);
+    const data = await res.json();
+
+    if (data.error) {
+      console.error('[Calendar] API error:', data.error);
+      throw new Error(`Calendar API: ${data.error.message || data.error}`);
+    }
+
+    return parseEvents(data.items || []);
   }
 
-  const items = data.items || [];
+  throw new Error('Calendar API: failed after retry');
+}
+
+interface GCalEvent {
+  id?: string; summary?: string;
+  start?: { dateTime?: string; date?: string };
+  end?: { dateTime?: string; date?: string };
+  attendees?: { email?: string; displayName?: string; responseStatus?: string }[];
+  location?: string; description?: string; status?: string; htmlLink?: string;
+}
+
+function parseEvents(items: GCalEvent[]): CalendarEvent[] {
   console.log(`[Calendar] Got ${items.length} raw events`);
-
-  interface GCalEvent {
-    id?: string; summary?: string;
-    start?: { dateTime?: string; date?: string };
-    end?: { dateTime?: string; date?: string };
-    attendees?: { email?: string; displayName?: string; responseStatus?: string }[];
-    location?: string; description?: string; status?: string; htmlLink?: string;
-  }
-
-  return items.map((event: GCalEvent) => ({
+  return items.map(event => ({
     id: event.id || '',
     summary: event.summary || '',
     start: event.start?.dateTime || event.start?.date || '',
