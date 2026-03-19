@@ -76,10 +76,12 @@ export interface AnalyticsData {
   weeklyVolume: WeeklyVolume[];
   dayBreakdown: Record<string, number>;
   timeSlots: { morning: number; afternoon: number; late: number };
-  monthlyComparison: { month: string; calls: number }[];
+  monthlyComparison: { month: string; calls: number; isCurrent?: boolean }[];
   busiestDay: string;
   busiestTime: string;
   totalCancellations: number;
+  totalCalls?: number;
+  range?: string;
 }
 
 export interface CancelledEvent {

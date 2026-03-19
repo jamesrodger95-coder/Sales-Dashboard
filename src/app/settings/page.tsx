@@ -10,15 +10,11 @@ export default function SettingsPage() {
     const checkCalendar = async () => {
       try {
         const now = new Date();
-        const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+        const oneHourAgo = new Date(now.getTime() - 3600000);
         const res = await fetch(`/api/calendar?timeMin=${oneHourAgo.toISOString()}&timeMax=${now.toISOString()}&salesOnly=false`);
         const data = await res.json();
-        if (data.error) {
-          setCalendarStatus('error');
-          setCalendarError(data.error);
-        } else {
-          setCalendarStatus('connected');
-        }
+        setCalendarStatus(data.error ? 'error' : 'connected');
+        if (data.error) setCalendarError(data.error);
       } catch (err: unknown) {
         setCalendarStatus('error');
         setCalendarError(err instanceof Error ? err.message : 'Connection failed');
@@ -27,35 +23,20 @@ export default function SettingsPage() {
     checkCalendar();
   }, []);
 
-  const statusDot = {
-    checking: 'bg-warning animate-pulse',
-    connected: 'bg-success',
-    error: 'bg-danger',
-  }[calendarStatus];
-
-  const statusLabel = {
-    checking: 'Checking',
-    connected: 'Connected',
-    error: 'Error',
-  }[calendarStatus];
-
   return (
-    <div className="px-5 py-8 max-w-[700px] mx-auto">
-      <div className="mb-10">
-        <h1 className="text-2xl font-bold tracking-tight text-white">Settings</h1>
-        <p className="text-sm text-muted mt-1.5">Connections and agent configuration</p>
-      </div>
+    <div className="px-5 py-6 max-w-[700px] mx-auto">
+      <h1 className="text-lg font-semibold text-white mb-6">Settings</h1>
 
-      <div className="space-y-5">
-        {/* Connections */}
+      <div className="space-y-6">
         <div>
-          <h2 className="text-xs font-semibold uppercase tracking-heading text-dim mb-4">Connections</h2>
-
-          <div className="rounded-card border border-subtle bg-surface divide-y divide-subtle">
-            {/* Google Calendar */}
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-4">Connections</h2>
+          <div className="rounded-2xl border border-[#1A1A1A] bg-surface divide-y divide-[#1A1A1A]">
             <div className="p-5 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className={`w-2 h-2 rounded-full ${statusDot}`} />
+                <span className={`w-2 h-2 rounded-full ${
+                  calendarStatus === 'connected' ? 'bg-success' :
+                  calendarStatus === 'error' ? 'bg-danger' : 'bg-warning animate-pulse'
+                }`} />
                 <div>
                   <h3 className="text-sm font-medium text-white">Google Calendar</h3>
                   <p className="text-xs text-dim mt-0.5">
@@ -65,28 +46,27 @@ export default function SettingsPage() {
                   </p>
                 </div>
               </div>
-              <span className="text-xs text-muted">{statusLabel}</span>
+              <span className={`text-xs ${calendarStatus === 'connected' ? 'text-success' : calendarStatus === 'error' ? 'text-danger' : 'text-warning'}`}>
+                {calendarStatus === 'connected' ? 'Connected' : calendarStatus === 'error' ? 'Error' : 'Checking'}
+              </span>
             </div>
 
-            {/* Zoho CRM */}
             <div className="p-5 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <span className="w-2 h-2 rounded-full bg-dim" />
                 <div>
                   <h3 className="text-sm font-medium text-white">Zoho CRM</h3>
-                  <p className="text-xs text-dim mt-0.5">Will sync leads, deals, and contacts</p>
+                  <p className="text-xs text-dim mt-0.5">Orders, pipeline stages, conversion tracking, follow-ups</p>
                 </div>
               </div>
-              <span className="text-xs text-dim">Coming Soon</span>
+              <span className="text-[10px] text-dim border border-[#333] rounded-full px-2 py-0.5">Coming Soon</span>
             </div>
           </div>
         </div>
 
-        {/* Agents */}
         <div>
-          <h2 className="text-xs font-semibold uppercase tracking-heading text-dim mb-4">AI Agents</h2>
-
-          <div className="rounded-card border border-subtle bg-surface divide-y divide-subtle">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-4">AI Agents</h2>
+          <div className="rounded-2xl border border-[#1A1A1A] bg-surface divide-y divide-[#1A1A1A]">
             {[
               { name: 'Head Agent', desc: 'Orchestrates morning briefing' },
               { name: 'Call Tracker', desc: 'Builds monthly call list from calendar' },
@@ -99,8 +79,8 @@ export default function SettingsPage() {
                   <p className="text-sm font-medium text-white">{agent.name}</p>
                   <p className="text-xs text-dim mt-0.5">{agent.desc}</p>
                 </div>
-                <span className="flex items-center gap-2 text-xs text-muted">
-                  <span className="w-2 h-2 rounded-full bg-success" />
+                <span className="flex items-center gap-1.5 text-xs text-muted">
+                  <span className="w-1.5 h-1.5 rounded-full bg-success" />
                   Active
                 </span>
               </div>
@@ -108,15 +88,19 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Model */}
         <div>
-          <h2 className="text-xs font-semibold uppercase tracking-heading text-dim mb-4">Model</h2>
-          <div className="rounded-card border border-subtle bg-surface p-5">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-4">Model</h2>
+          <div className="rounded-2xl border border-[#1A1A1A] bg-surface p-5">
             <p className="text-sm text-white font-medium">Claude Sonnet 4</p>
-            <p className="text-xs text-dim mt-1">claude-sonnet-4-20250514 — used for all agent analysis</p>
+            <p className="text-xs text-dim mt-1">claude-sonnet-4-20250514</p>
           </div>
         </div>
       </div>
+
+      <footer className="border-t border-[#1A1A1A] mt-8 pt-4 pb-8 flex items-center justify-between">
+        <span className="text-[11px] text-[#333]">Bryant Dental Sales Intelligence</span>
+        <span className="text-[11px] text-[#333]">Powered by Claude AI</span>
+      </footer>
     </div>
   );
 }

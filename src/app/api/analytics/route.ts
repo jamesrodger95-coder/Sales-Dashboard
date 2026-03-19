@@ -1,12 +1,12 @@
 export const dynamic = 'force-dynamic';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { fetchCalendarEvents, isSalesCall, isCancelled } from '@/lib/google-calendar';
 
 function getWeekRange(date: Date): string {
   const start = new Date(date);
-  start.setDate(start.getDate() - start.getDay() + 1); // Monday
+  start.setDate(start.getDate() - start.getDay() + 1);
   const end = new Date(start);
-  end.setDate(end.getDate() + 4); // Friday
+  end.setDate(end.getDate() + 4);
   const fmt = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
   return `${fmt(start)} - ${fmt(end)}`;
 }
@@ -17,20 +17,41 @@ function getTimeSlot(hour: number): 'morning' | 'afternoon' | 'late' {
   return 'late';
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const { searchParams } = new URL(request.url);
     const now = new Date();
 
-    // Fetch 8 weeks of data
-    const eightWeeksAgo = new Date(now.getTime() - 56 * 24 * 60 * 60 * 1000);
-    const allEvents = await fetchCalendarEvents(eightWeeksAgo.toISOString(), now.toISOString());
+    // Support date range params: ?range=3m (default), 1w, 1m, 30d, 6m, or custom ?from=X&to=Y
+    const range = searchParams.get('range') || '3m';
+    const customFrom = searchParams.get('from');
+    const customTo = searchParams.get('to');
+
+    let startDate: Date;
+    const endDate = customTo ? new Date(customTo) : now;
+
+    if (customFrom) {
+      startDate = new Date(customFrom);
+    } else {
+      switch (range) {
+        case '1w': startDate = new Date(now.getTime() - 7 * 86400000); break;
+        case '1m': startDate = new Date(now.getFullYear(), now.getMonth(), 1); break;
+        case '30d': startDate = new Date(now.getTime() - 30 * 86400000); break;
+        case '6m': startDate = new Date(now.getTime() - 180 * 86400000); break;
+        case '1y': startDate = new Date(now.getTime() - 365 * 86400000); break;
+        default: startDate = new Date(now.getTime() - 90 * 86400000); break; // 3m
+      }
+    }
+
+    const allEvents = await fetchCalendarEvents(startDate.toISOString(), endDate.toISOString());
     const salesCalls = allEvents.filter(isSalesCall);
     const cancelled = allEvents.filter(isCancelled);
 
-    // Weekly volume (8 weeks)
+    // Weekly volume
     const weekMap = new Map<string, { calls: number; isCurrent: boolean }>();
-    for (let i = 7; i >= 0; i--) {
-      const weekDate = new Date(now.getTime() - i * 7 * 24 * 60 * 60 * 1000);
+    const weeksBack = Math.ceil((endDate.getTime() - startDate.getTime()) / (7 * 86400000));
+    for (let i = Math.min(weeksBack, 52); i >= 0; i--) {
+      const weekDate = new Date(endDate.getTime() - i * 7 * 86400000);
       const label = getWeekRange(weekDate);
       if (!weekMap.has(label)) {
         weekMap.set(label, { calls: 0, isCurrent: i === 0 });
@@ -39,14 +60,10 @@ export async function GET() {
     for (const event of salesCalls) {
       const d = new Date(event.start);
       const label = getWeekRange(d);
-      if (weekMap.has(label)) {
-        weekMap.get(label)!.calls++;
-      }
+      if (weekMap.has(label)) weekMap.get(label)!.calls++;
     }
     const weeklyVolume = Array.from(weekMap.entries()).map(([week, data]) => ({
-      week,
-      calls: data.calls,
-      isCurrent: data.isCurrent,
+      week, calls: data.calls, isCurrent: data.isCurrent,
     }));
 
     // Day breakdown
@@ -65,32 +82,30 @@ export async function GET() {
       timeSlots[getTimeSlot(hour)]++;
     }
 
-    // Monthly comparison (past 6 months)
-    const monthlyComparison: { month: string; calls: number }[] = [];
-    for (let i = 5; i >= 0; i--) {
+    // Monthly comparison
+    const monthlyComparison: { month: string; calls: number; isCurrent: boolean }[] = [];
+    const monthsSpan = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (30 * 86400000)));
+    for (let i = Math.min(monthsSpan, 12) - 1; i >= 0; i--) {
       const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59);
-      const label = monthDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+      const label = monthDate.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
 
-      if (monthDate >= eightWeeksAgo) {
+      if (monthDate >= startDate) {
         const count = salesCalls.filter(e => {
           const d = new Date(e.start);
           return d >= monthDate && d <= monthEnd;
         }).length;
-        monthlyComparison.push({ month: label, calls: count });
+        monthlyComparison.push({ month: label, calls: count, isCurrent: i === 0 });
       } else {
-        // Need to fetch older months separately
         try {
           const olderEvents = await fetchCalendarEvents(monthDate.toISOString(), monthEnd.toISOString());
-          const olderSales = olderEvents.filter(isSalesCall);
-          monthlyComparison.push({ month: label, calls: olderSales.length });
+          monthlyComparison.push({ month: label, calls: olderEvents.filter(isSalesCall).length, isCurrent: i === 0 });
         } catch {
-          monthlyComparison.push({ month: label, calls: 0 });
+          monthlyComparison.push({ month: label, calls: 0, isCurrent: i === 0 });
         }
       }
     }
 
-    // Busiest day and time
     const busiestDay = Object.entries(dayBreakdown).sort(([, a], [, b]) => b - a)[0]?.[0] || 'N/A';
     const timeLabels = { morning: 'Morning (8-12)', afternoon: 'Afternoon (12-4)', late: 'Late (4-6)' };
     const busiestTime = Object.entries(timeSlots).sort(([, a], [, b]) => b - a)[0]?.[0] as keyof typeof timeLabels || 'morning';
@@ -103,6 +118,10 @@ export async function GET() {
       busiestDay,
       busiestTime: timeLabels[busiestTime],
       totalCancellations: cancelled.length,
+      totalCalls: salesCalls.length,
+      range,
+      from: startDate.toISOString(),
+      to: endDate.toISOString(),
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Analytics failed';

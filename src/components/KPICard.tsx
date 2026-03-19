@@ -12,35 +12,33 @@ interface KPICardProps {
   badge?: string;
 }
 
-export default function KPICard({ title, value, subtitle, status = 'default', loading, href, badge }: KPICardProps) {
-  const dotColor = {
-    default: 'bg-white/20',
-    success: 'bg-success',
-    warning: 'bg-warning',
-    danger: 'bg-danger',
-  }[status];
+const accentBorder = {
+  default: 'border-b-white/10',
+  success: 'border-b-success/40',
+  warning: 'border-b-warning/40',
+  danger: 'border-b-danger/40',
+};
 
+export default function KPICard({ title, value, subtitle, status = 'default', loading, href, badge }: KPICardProps) {
   const content = (
-    <div className={`rounded-card border border-subtle bg-surface p-6 transition-all duration-200 hover:border-subtle-hover ${href ? 'cursor-pointer hover:bg-surface-hover' : ''}`}>
-      <div className="flex items-center gap-2 mb-4">
-        {status !== 'default' && (
-          <span className={`w-2 h-2 rounded-full ${dotColor}`} />
-        )}
-        {loading ? (
-          <div className="skeleton h-3 w-24" />
-        ) : (
-          <p className="text-xs font-medium uppercase tracking-heading text-muted">{title}</p>
-        )}
-        {badge && !loading && (
-          <span className="ml-auto text-[10px] text-dim border border-subtle rounded-full px-2 py-0.5">{badge}</span>
-        )}
-      </div>
+    <div className={`rounded-2xl border border-[#1A1A1A] border-b-2 ${accentBorder[status]} bg-surface p-6 transition-all duration-200 hover:border-[#222] ${href ? 'cursor-pointer hover:bg-surface-hover' : ''}`}>
       {loading ? (
-        <div className="skeleton h-11 w-16 mt-1" />
+        <>
+          <div className="skeleton h-3 w-20 mb-5" />
+          <div className="skeleton h-12 w-16" />
+        </>
       ) : (
-        <p className="text-kpi-sm lg:text-kpi text-white tabular-nums">{value}</p>
+        <>
+          <div className="flex items-center gap-2 mb-3">
+            <p className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">{title}</p>
+            {badge && (
+              <span className="ml-auto text-[9px] text-dim border border-subtle rounded-full px-1.5 py-0.5">{badge}</span>
+            )}
+          </div>
+          <p className="text-[3.2rem] leading-none font-light text-white tabular-nums tracking-tight">{value}</p>
+          {subtitle && <p className="text-[11px] text-dim mt-3 leading-relaxed">{subtitle}</p>}
+        </>
       )}
-      {subtitle && !loading && <p className="text-[11px] text-dim mt-3 leading-relaxed">{subtitle}</p>}
     </div>
   );
 
