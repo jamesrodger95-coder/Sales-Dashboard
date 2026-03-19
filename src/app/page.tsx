@@ -7,13 +7,25 @@ import CallList from '@/components/CallList';
 import WeeklyChart from '@/components/WeeklyChart';
 import ScheduleList from '@/components/ScheduleList';
 import SyncStatus from '@/components/SyncStatus';
-import { BriefingResult, CallTrackerResult, AnalyticsData } from '@/lib/types';
+import { CallRecord, AnalyticsData } from '@/lib/types';
 
 type SyncState = 'idle' | 'syncing' | 'synced' | 'error';
 
+interface DashboardData {
+  kpis: {
+    callsThisMonth: number;
+    demosThisWeek: number;
+    cancellations: number;
+    upcomingDemos: number;
+  };
+  calls: CallRecord[];
+  todaySchedule: { time: string; event: string; type: string; phone?: string }[];
+  tomorrowSchedule: { time: string; event: string; type: string; phone?: string }[];
+  month: string;
+}
+
 export default function Dashboard() {
-  const [briefing, setBriefing] = useState<BriefingResult | null>(null);
-  const [callTracker, setCallTracker] = useState<CallTrackerResult | null>(null);
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncState, setSyncState] = useState<SyncState>('syncing');
@@ -24,28 +36,32 @@ export default function Dashboard() {
     setSyncState('syncing');
 
     try {
-      const [briefingRes, callRes, analyticsRes] = await Promise.allSettled([
-        fetch('/api/agents/briefing').then(r => r.json()),
-        fetch('/api/agents/call-tracker').then(r => r.json()),
+      // Fetch dashboard data (direct calendar) and analytics in parallel
+      const [dashRes, analyticsRes] = await Promise.allSettled([
+        fetch('/api/dashboard').then(r => r.json()),
         fetch('/api/analytics').then(r => r.json()),
       ]);
 
-      if (briefingRes.status === 'fulfilled' && !briefingRes.value.error) {
-        setBriefing(briefingRes.value);
+      let anySuccess = false;
+
+      if (dashRes.status === 'fulfilled' && !dashRes.value.error) {
+        setDashboard(dashRes.value);
+        anySuccess = true;
+      } else {
+        console.error('Dashboard fetch failed:', dashRes.status === 'rejected' ? dashRes.reason : dashRes.value.error);
       }
-      if (callRes.status === 'fulfilled' && !callRes.value.error) {
-        setCallTracker(callRes.value);
-      }
+
       if (analyticsRes.status === 'fulfilled' && !analyticsRes.value.error) {
         setAnalytics(analyticsRes.value);
+        anySuccess = true;
       }
 
-      const anySuccess = [briefingRes, callRes, analyticsRes].some(r => r.status === 'fulfilled');
       setSyncState(anySuccess ? 'synced' : 'error');
 
-      // Fade "Synced" after 2s
       if (syncedTimer.current) clearTimeout(syncedTimer.current);
-      syncedTimer.current = setTimeout(() => setSyncState('idle'), 2000);
+      if (anySuccess) {
+        syncedTimer.current = setTimeout(() => setSyncState('idle'), 2000);
+      }
     } catch {
       setSyncState('error');
     } finally {
@@ -58,15 +74,10 @@ export default function Dashboard() {
     return () => { if (syncedTimer.current) clearTimeout(syncedTimer.current); };
   }, [loadData]);
 
-  const kpis = briefing?.kpis;
+  const kpis = dashboard?.kpis;
 
   return (
     <div className="px-5 py-6 max-w-[1400px] mx-auto">
-
-      {/* Greeting */}
-      {briefing?.greeting && (
-        <p className="text-sm text-muted mb-6 max-w-xl fade-in-row">{briefing.greeting}</p>
-      )}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-2">
@@ -105,43 +116,22 @@ export default function Dashboard() {
       {/* Sync status */}
       <SyncStatus status={syncState} onRefresh={loadData} />
 
-      {/* Priority Items */}
-      {briefing && (briefing.red.length > 0 || briefing.yellow.length > 0) && (
-        <div className="mb-8">
-          <h2 className="text-xs font-semibold uppercase tracking-heading text-dim mb-4">Priority Actions</h2>
-          <div className="space-y-2">
-            {briefing.red.map((item, i) => (
-              <div key={`r${i}`} className="fade-in-row flex items-start gap-3 p-4 rounded-card border border-subtle bg-surface" style={{ animationDelay: `${i * 50}ms` }}>
-                <span className="w-2 h-2 rounded-full bg-danger mt-1.5 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-white">{item.action}</p>
-                  {item.phone && <p className="text-xs text-muted tabular-nums mt-1">{item.phone}</p>}
-                </div>
-              </div>
-            ))}
-            {briefing.yellow.map((item, i) => (
-              <div key={`y${i}`} className="fade-in-row flex items-start gap-3 p-4 rounded-card border border-subtle bg-surface" style={{ animationDelay: `${(briefing.red.length + i) * 50}ms` }}>
-                <span className="w-2 h-2 rounded-full bg-warning mt-1.5 flex-shrink-0" />
-                <p className="text-sm text-white">{item.item}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Call list + Weekly chart */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-8">
         <div className="rounded-card border border-subtle bg-surface p-6">
           <div className="flex items-center justify-between mb-5">
-            <h2 className="text-xs font-semibold uppercase tracking-heading text-dim">Monthly Call List</h2>
+            <h2 className="text-xs font-semibold uppercase tracking-heading text-dim">
+              Monthly Call List
+              {dashboard && <span className="text-muted ml-2">({dashboard.calls.length})</span>}
+            </h2>
             <Link href="/calls" className="text-xs text-muted hover:text-white transition-colors">
               View all
             </Link>
           </div>
-          <CallList calls={(callTracker?.calls || []).slice(0, 8)} loading={loading} />
-          {!loading && (callTracker?.calls?.length ?? 0) > 8 && (
+          <CallList calls={(dashboard?.calls || []).slice(0, 8)} loading={loading} />
+          {!loading && (dashboard?.calls?.length ?? 0) > 8 && (
             <Link href="/calls" className="block mt-4 text-xs text-muted hover:text-white transition-colors text-center">
-              + {(callTracker?.calls?.length ?? 0) - 8} more calls
+              + {(dashboard?.calls?.length ?? 0) - 8} more calls
             </Link>
           )}
         </div>
@@ -260,10 +250,10 @@ export default function Dashboard() {
       {/* Schedules */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-8">
         <div className="rounded-card border border-subtle bg-surface p-6">
-          <ScheduleList title="Today" items={briefing?.todaySchedule || []} loading={loading} />
+          <ScheduleList title="Today" items={dashboard?.todaySchedule || []} loading={loading} />
         </div>
         <div className="rounded-card border border-subtle bg-surface p-6">
-          <ScheduleList title="Tomorrow" items={briefing?.tomorrowSchedule || []} loading={loading} />
+          <ScheduleList title="Tomorrow" items={dashboard?.tomorrowSchedule || []} loading={loading} />
         </div>
       </div>
 

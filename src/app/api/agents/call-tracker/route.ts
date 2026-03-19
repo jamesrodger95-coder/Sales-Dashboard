@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { fetchCalendarEvents, isSalesCall, getExternalAttendeeName, extractPhone, extractCountry } from '@/lib/google-calendar';
 import { askClaude, AGENT_PROMPTS } from '@/lib/claude-client';
