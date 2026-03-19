@@ -1,11 +1,24 @@
 export interface CallRecord {
   name: string;
+  email?: string;
   phone: string | null;
   date: string;
   country: string | null;
   eventTitle: string;
   description?: string;
   attendeeStatus?: string;
+}
+
+export interface ScheduleItem {
+  time: string;
+  name: string;
+  email?: string;
+  phone: string | null;
+  type: string;
+  location?: string | null;
+  notes?: string | null;
+  attendanceConfirmed?: boolean | null;
+  rescheduleReason?: string | null;
 }
 
 export interface CallTrackerResult {

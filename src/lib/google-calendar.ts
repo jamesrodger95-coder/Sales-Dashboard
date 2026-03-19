@@ -1,5 +1,4 @@
 // Direct Google Calendar API calls using fetch (no googleapis dependency)
-// This avoids module-level initialization issues in Next.js serverless
 
 let cachedAccessToken: string | null = null;
 let tokenExpiry = 0;
@@ -30,7 +29,7 @@ async function getAccessToken(): Promise<string> {
   }
 
   cachedAccessToken = data.access_token;
-  tokenExpiry = Date.now() + (data.expires_in - 60) * 1000; // Refresh 60s early
+  tokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
   console.log('[Calendar] Got access token:', data.access_token?.substring(0, 20) + '...');
   return data.access_token;
 }
@@ -48,7 +47,71 @@ export interface CalendarEvent {
 }
 
 const PHONE_REGEX = /(\+?\d[\d\s\-().]{7,}\d)/g;
-const COUNTRY_REGEX = /Country\s*:?\s*([A-Za-z\s]+)/i;
+
+// --- Name extraction: parse from event title first ---
+
+export function extractLeadName(event: CalendarEvent): string {
+  const summary = event.summary || '';
+
+  // Try parsing from title: "Lead Name and James..." or "Lead Name and James | Bryant Dental Demo"
+  const patterns = [
+    / and James Rodger$/i,
+    / and James \| Bryant Dental Demo$/i,
+    / and James \| Bryant Dental$/i,
+    / and James$/i,
+  ];
+
+  for (const pattern of patterns) {
+    if (pattern.test(summary)) {
+      const name = summary.replace(pattern, '').trim();
+      if (name.length > 0 && name.length < 80) return name;
+    }
+  }
+
+  // Fallback: try splitting on " and James"
+  const andJamesIdx = summary.toLowerCase().indexOf(' and james');
+  if (andJamesIdx > 0) {
+    const name = summary.substring(0, andJamesIdx).trim();
+    if (name.length > 0 && name.length < 80) return name;
+  }
+
+  // Fallback: attendee displayName
+  const external = event.attendees?.find(
+    a => !a.email?.endsWith('@bryant.dental') && !a.email?.endsWith('@calendar.google.com')
+  );
+  if (external?.displayName && external.displayName.length > 1) {
+    return external.displayName;
+  }
+
+  // Last resort: format email nicely
+  if (external?.email) {
+    const prefix = external.email.split('@')[0];
+    // Capitalize, replace dots/underscores with spaces, strip trailing numbers
+    return prefix
+      .replace(/[._]/g, ' ')
+      .replace(/\d+$/g, '')
+      .trim()
+      .split(' ')
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ') || prefix;
+  }
+
+  return summary || 'Unknown';
+}
+
+export function getExternalAttendeeEmail(event: CalendarEvent): string {
+  const external = event.attendees?.find(
+    a => !a.email?.endsWith('@bryant.dental') && !a.email?.endsWith('@calendar.google.com')
+  );
+  return external?.email || '';
+}
+
+// Keep old function name for backwards compat but use new logic
+export function getExternalAttendeeName(event: CalendarEvent): string {
+  return extractLeadName(event);
+}
+
+// --- Phone extraction ---
 
 export function extractPhone(event: CalendarEvent): string | null {
   const sources = [event.location, event.description].filter(Boolean);
@@ -59,27 +122,99 @@ export function extractPhone(event: CalendarEvent): string | null {
   return null;
 }
 
+// --- Country & city extraction ---
+
+const PHONE_COUNTRY_MAP: Record<string, string> = {
+  '+44': 'United Kingdom', '+1': 'North America', '+61': 'Australia',
+  '+353': 'Ireland', '+49': 'Germany', '+33': 'France', '+34': 'Spain',
+  '+39': 'Italy', '+31': 'Netherlands', '+32': 'Belgium', '+41': 'Switzerland',
+  '+46': 'Sweden', '+47': 'Norway', '+358': 'Finland', '+36': 'Hungary',
+  '+355': 'Albania', '+359': 'Bulgaria', '+56': 'Chile', '+27': 'South Africa',
+  '+971': 'UAE', '+966': 'Saudi Arabia', '+965': 'Kuwait',
+  '+91': 'India', '+65': 'Singapore', '+64': 'New Zealand',
+};
+
 export function extractCountry(event: CalendarEvent): string | null {
-  if (event.description) {
-    const match = event.description.match(COUNTRY_REGEX);
-    if (match) return match[1].trim();
+  const desc = event.description || '';
+
+  // Priority 1: Parse "Country?: value" from description
+  const countryMatch = desc.match(/Country\s*\??\s*:?\s*([^\n]+)/i);
+  if (countryMatch) {
+    const val = countryMatch[1].trim();
+    if (val.length > 0 && val.length < 50) return val;
   }
+
+  // Priority 2: Phone country code
   const phone = extractPhone(event);
   if (phone) {
-    if (phone.startsWith('+44')) return 'United Kingdom';
-    if (phone.startsWith('+1')) return 'United States/Canada';
-    if (phone.startsWith('+61')) return 'Australia';
-    if (phone.startsWith('+353')) return 'Ireland';
-    if (phone.startsWith('+49')) return 'Germany';
-    if (phone.startsWith('+33')) return 'France';
-    if (phone.startsWith('+971')) return 'UAE';
-    if (phone.startsWith('+966')) return 'Saudi Arabia';
-    if (phone.startsWith('+91')) return 'India';
-    if (phone.startsWith('+65')) return 'Singapore';
-    if (phone.startsWith('+64')) return 'New Zealand';
+    // Check longer codes first
+    const sorted = Object.keys(PHONE_COUNTRY_MAP).sort((a, b) => b.length - a.length);
+    for (const code of sorted) {
+      if (phone.startsWith(code)) return PHONE_COUNTRY_MAP[code];
+    }
+  }
+
+  return null;
+}
+
+export function extractCity(event: CalendarEvent): string | null {
+  const desc = event.description || '';
+  const cityMatch = desc.match(/City\s*\??\s*:?\s*([^\n]+)/i);
+  if (cityMatch) {
+    const val = cityMatch[1].trim();
+    if (val.length > 0 && val.length < 50) return val;
   }
   return null;
 }
+
+// --- Meeting notes extraction from Calendly/Cal.com descriptions ---
+
+export interface MeetingNotes {
+  country?: string;
+  city?: string;
+  notes?: string;
+  attendanceConfirmed?: boolean;
+  rescheduleReason?: string;
+}
+
+export function extractMeetingNotes(event: CalendarEvent): MeetingNotes {
+  const desc = event.description || '';
+  const result: MeetingNotes = {};
+
+  result.country = extractCountry(event) || undefined;
+  result.city = extractCity(event) || undefined;
+
+  // Notes from Calendly/Cal.com
+  const notesPatterns = [
+    /Please share anything that will help prepare for our meeting\s*\.?\s*:?\s*([^\n]+)/i,
+    /Additional notes?\s*:?\s*([^\n]+)/i,
+    /Notes?\s*:?\s*([^\n]+)/i,
+    /Message\s*:?\s*([^\n]+)/i,
+  ];
+  for (const pattern of notesPatterns) {
+    const match = desc.match(pattern);
+    if (match && match[1].trim().length > 0) {
+      result.notes = match[1].trim();
+      break;
+    }
+  }
+
+  // Attendance confirmation
+  const attendanceMatch = desc.match(/Can we count on your attendance[^:]*:?\s*([^\n]+)/i);
+  if (attendanceMatch) {
+    result.attendanceConfirmed = attendanceMatch[1].trim().toLowerCase().startsWith('yes');
+  }
+
+  // Reschedule reason
+  const rescheduleMatch = desc.match(/Reschedule Reason\s*:?\s*([^\n]+)/i);
+  if (rescheduleMatch) {
+    result.rescheduleReason = rescheduleMatch[1].trim();
+  }
+
+  return result;
+}
+
+// --- Event status helpers ---
 
 export function isCancelled(event: CalendarEvent): boolean {
   if (event.status === 'cancelled') return true;
@@ -110,7 +245,6 @@ export function hasPhoneInLocation(event: CalendarEvent): boolean {
 export function isSalesCall(event: CalendarEvent): boolean {
   if (isCancelled(event)) return false;
   if (event.summary?.toLowerCase().includes('leave') || event.summary?.toLowerCase().includes('holiday')) return false;
-  // Skip all-day events (start has date but no dateTime)
   if (event.start && !event.start.includes('T')) return false;
   if (!isInternalOnly(event)) return true;
   if (hasCalendlyOrCalcom(event)) return true;
@@ -118,12 +252,7 @@ export function isSalesCall(event: CalendarEvent): boolean {
   return false;
 }
 
-export function getExternalAttendeeName(event: CalendarEvent): string {
-  const external = event.attendees?.find(
-    a => !a.email?.endsWith('@bryant.dental') && !a.email?.endsWith('@calendar.google.com')
-  );
-  return external?.displayName || external?.email?.split('@')[0] || event.summary || 'Unknown';
-}
+// --- Fetch ---
 
 export async function fetchCalendarEvents(
   timeMin: string,
@@ -132,11 +261,7 @@ export async function fetchCalendarEvents(
   const accessToken = await getAccessToken();
 
   const params = new URLSearchParams({
-    timeMin,
-    timeMax,
-    maxResults: '500',
-    singleEvents: 'true',
-    orderBy: 'startTime',
+    timeMin, timeMax, maxResults: '500', singleEvents: 'true', orderBy: 'startTime',
   });
 
   const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`;
@@ -157,15 +282,11 @@ export async function fetchCalendarEvents(
   console.log(`[Calendar] Got ${items.length} raw events`);
 
   interface GCalEvent {
-    id?: string;
-    summary?: string;
+    id?: string; summary?: string;
     start?: { dateTime?: string; date?: string };
     end?: { dateTime?: string; date?: string };
     attendees?: { email?: string; displayName?: string; responseStatus?: string }[];
-    location?: string;
-    description?: string;
-    status?: string;
-    htmlLink?: string;
+    location?: string; description?: string; status?: string; htmlLink?: string;
   }
 
   return items.map((event: GCalEvent) => ({
@@ -174,9 +295,7 @@ export async function fetchCalendarEvents(
     start: event.start?.dateTime || event.start?.date || '',
     end: event.end?.dateTime || event.end?.date || '',
     attendees: (event.attendees || []).map(a => ({
-      email: a.email || '',
-      displayName: a.displayName || undefined,
-      responseStatus: a.responseStatus || undefined,
+      email: a.email || '', displayName: a.displayName || undefined, responseStatus: a.responseStatus || undefined,
     })),
     location: event.location || undefined,
     description: event.description || undefined,

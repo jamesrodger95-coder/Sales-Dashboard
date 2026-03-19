@@ -7,15 +7,15 @@ import CallList from '@/components/CallList';
 import WeeklyChart from '@/components/WeeklyChart';
 import ScheduleList from '@/components/ScheduleList';
 import SyncStatus from '@/components/SyncStatus';
-import { CallRecord, AnalyticsData } from '@/lib/types';
+import { CallRecord, ScheduleItem, AnalyticsData } from '@/lib/types';
 
 type SyncState = 'idle' | 'syncing' | 'synced' | 'error';
 
 interface DashboardData {
   kpis: { callsThisMonth: number; demosThisWeek: number; cancellations: number; upcomingDemos: number };
   calls: CallRecord[];
-  todaySchedule: { time: string; event: string; type: string; phone?: string }[];
-  tomorrowSchedule: { time: string; event: string; type: string; phone?: string }[];
+  todaySchedule: ScheduleItem[];
+  tomorrowSchedule: ScheduleItem[];
   month: string;
 }
 

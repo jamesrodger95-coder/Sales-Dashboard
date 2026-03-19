@@ -20,8 +20,11 @@ export default function CallList({ calls, loading }: CallListProps) {
         {[...Array(6)].map((_, i) => (
           <div key={i} className="px-6 py-3 flex items-center gap-3">
             <div className="skeleton w-7 h-7 !rounded-full flex-shrink-0" />
-            <div className="skeleton h-4 w-28" />
-            <div className="skeleton h-3 w-24 ml-auto" />
+            <div className="flex-1 space-y-1">
+              <div className="skeleton h-4 w-32" />
+              <div className="skeleton h-3 w-40" />
+            </div>
+            <div className="skeleton h-3 w-16 ml-auto" />
           </div>
         ))}
       </div>
@@ -49,7 +52,7 @@ export default function CallList({ calls, loading }: CallListProps) {
             <th className="pb-3 pl-6 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">Name</th>
             <th className="pb-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">Phone</th>
             <th className="pb-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">Date</th>
-            <th className="pb-3 pr-6 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] hidden sm:table-cell">Country</th>
+            <th className="pb-3 pr-6 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] hidden sm:table-cell">Location</th>
           </tr>
         </thead>
         <tbody>
@@ -67,7 +70,10 @@ export default function CallList({ calls, loading }: CallListProps) {
                   >
                     {getInitial(call.name)}
                   </span>
-                  <span className="text-white font-medium">{call.name}</span>
+                  <div className="min-w-0">
+                    <p className="text-white font-medium truncate">{call.name}</p>
+                    {call.email && <p className="text-[11px] text-dim truncate">{call.email}</p>}
+                  </div>
                 </div>
               </td>
               <td className="py-3 text-muted tabular-nums text-xs font-mono">

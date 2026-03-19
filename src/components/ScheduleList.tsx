@@ -1,11 +1,6 @@
 'use client';
 
-interface ScheduleItem {
-  time: string;
-  event: string;
-  type?: string;
-  phone?: string;
-}
+import { ScheduleItem } from '@/lib/types';
 
 interface ScheduleListProps {
   items: ScheduleItem[];
@@ -18,12 +13,13 @@ export default function ScheduleList({ items, title, loading }: ScheduleListProp
     return (
       <div>
         <div className="skeleton h-3 w-16 mb-5" />
-        {[...Array(3)].map((_, i) => (
+        {[...Array(2)].map((_, i) => (
           <div key={i} className="flex gap-4 py-3 ml-3">
             <div className="skeleton h-4 w-12" />
             <div className="flex-1 space-y-1.5">
               <div className="skeleton h-4 w-44" />
-              <div className="skeleton h-3 w-24" />
+              <div className="skeleton h-3 w-28" />
+              <div className="skeleton h-3 w-36" />
             </div>
           </div>
         ))}
@@ -44,7 +40,6 @@ export default function ScheduleList({ items, title, loading }: ScheduleListProp
         </div>
       ) : (
         <div className="relative ml-3">
-          {/* Timeline line */}
           <div className="absolute left-[3px] top-4 bottom-4 w-px bg-[#1A1A1A]" />
 
           {items.map((item, i) => (
@@ -55,18 +50,42 @@ export default function ScheduleList({ items, title, loading }: ScheduleListProp
             >
               {/* Timeline dot */}
               <span className={`relative z-10 w-[7px] h-[7px] rounded-full mt-1.5 flex-shrink-0 ring-2 ring-black ${
+                item.attendanceConfirmed === false ? 'bg-danger' :
                 item.type === 'demo' ? 'bg-data-blue' :
-                item.type === 'follow-up' ? 'bg-warning' :
                 'bg-[#444]'
               }`} />
 
               <div className="flex-1 min-w-0">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-sm text-white tabular-nums font-semibold">{item.time}</span>
-                </div>
-                <p className="text-sm text-muted mt-0.5 truncate">{item.event}</p>
+                {/* Time */}
+                <span className="text-sm text-white tabular-nums font-semibold">{item.time}</span>
+
+                {/* Lead name */}
+                <p className="text-sm text-white mt-1">{item.name}</p>
+
+                {/* Phone */}
                 {item.phone && (
                   <p className="text-xs text-dim tabular-nums font-mono mt-0.5">{item.phone}</p>
+                )}
+
+                {/* Location */}
+                {item.location && (
+                  <p className="text-[11px] text-dim mt-1">{item.location}</p>
+                )}
+
+                {/* Notes */}
+                {item.notes && (
+                  <p className="text-[11px] text-muted italic mt-1 line-clamp-2">&ldquo;{item.notes}&rdquo;</p>
+                )}
+
+                {/* Warnings */}
+                {item.attendanceConfirmed === false && (
+                  <div className="flex items-center gap-1.5 mt-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-danger" />
+                    <span className="text-[10px] text-danger">Attendance not confirmed</span>
+                  </div>
+                )}
+                {item.rescheduleReason && (
+                  <p className="text-[10px] text-warning mt-1">Reschedule: {item.rescheduleReason}</p>
                 )}
               </div>
             </div>
