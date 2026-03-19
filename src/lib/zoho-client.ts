@@ -1,4 +1,4 @@
-// Zoho CRM API client with token caching and auto-refresh
+// Zoho CRM API client — verified field names and stages
 
 let cachedToken: string | null = null;
 let tokenExpiry = 0;
@@ -11,10 +11,8 @@ async function getAccessToken(): Promise<string> {
   tokenPromise = (async () => {
     const authDomain = process.env.ZOHO_AUTH_DOMAIN || 'https://accounts.zoho.com';
     console.log('[Zoho] Refreshing access token...');
-
     const res = await fetch(`${authDomain}/oauth/v2/token`, {
-      method: 'POST',
-      cache: 'no-store',
+      method: 'POST', cache: 'no-store',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         grant_type: 'refresh_token',
@@ -23,13 +21,11 @@ async function getAccessToken(): Promise<string> {
         refresh_token: process.env.ZOHO_REFRESH_TOKEN || '',
       }),
     });
-
     const data = await res.json();
     if (data.error) throw new Error(`Zoho auth: ${data.error}`);
-
     cachedToken = data.access_token;
-    tokenExpiry = Date.now() + 50 * 60 * 1000; // 50 minutes
-    console.log('[Zoho] Got token:', data.access_token?.substring(0, 20) + '...');
+    tokenExpiry = Date.now() + 50 * 60 * 1000;
+    console.log('[Zoho] Got token');
     return data.access_token;
   })();
 
@@ -40,35 +36,31 @@ async function getAccessToken(): Promise<string> {
 async function zohoFetch(path: string): Promise<Record<string, unknown>> {
   const apiDomain = process.env.ZOHO_API_DOMAIN || 'https://www.zohoapis.com';
   const token = await getAccessToken();
-
   const res = await fetch(`${apiDomain}${path}`, {
     cache: 'no-store',
     headers: { 'Authorization': `Zoho-oauthtoken ${token}` },
   });
-
   if (res.status === 401) {
-    cachedToken = null;
-    tokenExpiry = 0;
+    cachedToken = null; tokenExpiry = 0;
     const newToken = await getAccessToken();
-    const retry = await fetch(`${apiDomain}${path}`, {
-      cache: 'no-store',
-      headers: { 'Authorization': `Zoho-oauthtoken ${newToken}` },
-    });
-    return retry.json() as Promise<Record<string, unknown>>;
+    return (await fetch(`${apiDomain}${path}`, {
+      cache: 'no-store', headers: { 'Authorization': `Zoho-oauthtoken ${newToken}` },
+    })).json() as Promise<Record<string, unknown>>;
   }
-
   return res.json() as Promise<Record<string, unknown>>;
 }
 
-// --- Types ---
+// --- Types (verified field names) ---
 
 export interface ZohoLead {
   id: string;
   Full_Name: string;
   Email: string | null;
+  Mobile: string | null;
   Phone: string | null;
-  Lead_Status: string | null;
+  Status: string | null;        // "Status" field, NOT "Lead_Status"
   Country: string | null;
+  City: string | null;
   Created_Time: string;
   Modified_Time: string;
   Owner: { name: string; id: string; email: string };
@@ -91,117 +83,78 @@ export interface ZohoDeal {
   Owner: { name: string; id: string; email: string };
 }
 
-// --- Pipeline stage classification ---
+// --- Stage definitions (from actual Zoho data) ---
 
-export const PRE_PURCHASE_STAGES = [
-  'Customers Not Ordered',
-  'Confirmed Awaiting Mandate',
-  'Pending Payment Authorisation',
-  'Trial Requested',
-  'Trial Sent',
-  'Preorder Placed',
-  'Order Placed',
-];
+// Lead statuses with real counts (total ~2000 for James)
+export const LEAD_PRE_PURCHASE = ['First Contact Made', 'Virtual Demo Booked'];
+export const LEAD_DEMO_DONE = ['Virtual Demo Completed', 'Demo Completed'];
+export const LEAD_PURCHASED = ['Purchased'];
+export const LEAD_NO_SHOW = ['No Show'];
+export const LEAD_GONE_COLD = ['No Contact From Customer', 'No Contact', 'No Contact -'];
+export const LEAD_LOST = ['Customer Said No', 'Not a Lead', 'Dead Lead'];
 
-export const IN_PRODUCTION_STAGES = [
-  'Awaiting Measurements',
-  'Measurements Final Checks',
-  'Measurement Issues',
-  'Awaiting Customisation',
-  'Prescription to Order',
-  'Prescription Ordered',
-  'Awaiting Prescription',
-  'In Manufacturing',
-  'Order Assembled',
-  'Order Ready to Send',
-  'Address Confirmed',
-];
+// Deal stages (from actual Zoho data — ~885 for James)
+export const DEAL_AWAITING = ['Awaiting Measurements', 'Pending Payment Authorisation', 'Customers Not Ordered'];
+export const DEAL_IN_PROGRESS = ['Measurement Issues', 'Measurements Final Checks', 'Prescription Ordered', 'In Manufacturing', 'Order Assembled'];
+export const DEAL_READY = ['Address Confirmed', 'Order Ready to Send'];
+export const DEAL_SHIPPED = ['Order Dispatched to Customer', 'Not Dispatched By Post'];
+export const DEAL_POST_DELIVERY = ['Order Arrived', 'Pending Fit Call', 'Fit not confirmed - customer trialling', 'Loupes Fit', 'No Response from Customer', 'First Repair Raised', 'Second Repair Raised'];
+export const DEAL_PROBLEM = ['Order Refunded', 'LATE', 'Unsold Returned'];
 
-export const SHIPPED_STAGES = [
-  'Dispatched',
-  'Order Dispatched to Customer',
-  'Order Dispatched to Australia',
-  'Partially Fulfilled',
-  'Fulfilled',
-];
+export type LeadCategory = 'pre_purchase' | 'demo_done' | 'purchased' | 'no_show' | 'gone_cold' | 'lost' | 'unknown';
+export type DealCategory = 'awaiting' | 'in_progress' | 'ready' | 'shipped' | 'post_delivery' | 'problem' | 'other';
 
-export const POST_DELIVERY_STAGES = [
-  'Pending Fit Call',
-  'Fit not confirmed - customer trialling',
-  'Loupes Fit',
-  'Customer Happy',
-  'Customer Unhappy',
-  'Loupes do not Fit - Pending Repair Submission',
-  'First Repair Raised',
-  'Second Repair Raised',
-  'No Response from Customer',
-];
+export function categorizeLeadStatus(status: string | null): LeadCategory {
+  if (!status || status === '-None-' || status === 'Registered' || status === 'Not Contacted' || status === 'Booked In') return 'pre_purchase';
+  if (LEAD_PRE_PURCHASE.includes(status)) return 'pre_purchase';
+  if (LEAD_DEMO_DONE.includes(status)) return 'demo_done';
+  if (LEAD_PURCHASED.includes(status)) return 'purchased';
+  if (LEAD_NO_SHOW.includes(status)) return 'no_show';
+  if (LEAD_GONE_COLD.includes(status)) return 'gone_cold';
+  if (LEAD_LOST.includes(status)) return 'lost';
+  return 'unknown';
+}
 
-export const PROBLEM_STAGES = [
-  'LATE',
-  'Unsold Returned',
-  'Order Refunded',
-  'Refunded',
-  'Old',
-  'Not Dispatched By Post',
-];
-
-export type StageCategory = 'pre_purchase' | 'in_production' | 'shipped' | 'post_delivery' | 'problem' | 'other';
-
-export function categorizeStage(stage: string): StageCategory {
-  if (PRE_PURCHASE_STAGES.includes(stage)) return 'pre_purchase';
-  if (IN_PRODUCTION_STAGES.includes(stage)) return 'in_production';
-  if (SHIPPED_STAGES.includes(stage)) return 'shipped';
-  if (POST_DELIVERY_STAGES.includes(stage)) return 'post_delivery';
-  if (PROBLEM_STAGES.includes(stage)) return 'problem';
+export function categorizeDealStage(stage: string): DealCategory {
+  if (DEAL_AWAITING.includes(stage)) return 'awaiting';
+  if (DEAL_IN_PROGRESS.includes(stage)) return 'in_progress';
+  if (DEAL_READY.includes(stage)) return 'ready';
+  if (DEAL_SHIPPED.includes(stage)) return 'shipped';
+  if (DEAL_POST_DELIVERY.includes(stage)) return 'post_delivery';
+  if (DEAL_PROBLEM.includes(stage)) return 'problem';
   return 'other';
 }
 
 // --- Fetch functions ---
 
-export async function fetchJamesLeads(page = 1, perPage = 200): Promise<{ leads: ZohoLead[]; more: boolean; total: number }> {
-  const data = await zohoFetch(
-    `/crm/v6/Leads/search?criteria=(Owner.name:equals:James Rodger)&fields=Full_Name,Email,Phone,Lead_Status,Country,Created_Time,Modified_Time,Owner&per_page=${perPage}&page=${page}`
-  );
-  const leads = (data.data as ZohoLead[] | undefined) || [];
-  const info = data.info as { more_records?: boolean; count?: number } | undefined;
-  return { leads, more: !!info?.more_records, total: info?.count || leads.length };
-}
+const LEAD_FIELDS = 'Full_Name,Email,Mobile,Phone,Status,Country,City,Created_Time,Modified_Time,Owner';
+const DEAL_FIELDS = 'Deal_Name,Stage,Email,Phone,Country,Total_Order_Value,Contact_Name,Pipeline,Magnification,Lighting_Selection,Created_Time,Modified_Time,Owner';
 
 export async function fetchAllJamesLeads(): Promise<ZohoLead[]> {
   const all: ZohoLead[] = [];
-  let page = 1;
-  let more = true;
+  let page = 1, more = true;
   while (more && page <= 15) {
-    const { leads, more: hasMore } = await fetchJamesLeads(page, 200);
+    const data = await zohoFetch(`/crm/v6/Leads/search?criteria=(Owner.name:equals:James Rodger)&fields=${LEAD_FIELDS}&per_page=200&page=${page}`);
+    const leads = (data.data as ZohoLead[] | undefined) || [];
     all.push(...leads);
-    more = hasMore;
+    more = !!(data.info as { more_records?: boolean } | undefined)?.more_records;
     page++;
   }
-  console.log(`[Zoho] Fetched ${all.length} leads for James`);
+  console.log(`[Zoho] Fetched ${all.length} leads`);
   return all;
-}
-
-export async function fetchJamesDeals(page = 1, perPage = 200): Promise<{ deals: ZohoDeal[]; more: boolean; total: number }> {
-  const data = await zohoFetch(
-    `/crm/v6/Deals/search?criteria=(Owner.name:equals:James Rodger)&fields=Deal_Name,Stage,Email,Phone,Country,Total_Order_Value,Contact_Name,Pipeline,Magnification,Lighting_Selection,Created_Time,Modified_Time,Owner&per_page=${perPage}&page=${page}`
-  );
-  const deals = (data.deals as ZohoDeal[] | undefined) || (data.data as ZohoDeal[] | undefined) || [];
-  const info = data.info as { more_records?: boolean; count?: number } | undefined;
-  return { deals, more: !!info?.more_records, total: info?.count || deals.length };
 }
 
 export async function fetchAllJamesDeals(): Promise<ZohoDeal[]> {
   const all: ZohoDeal[] = [];
-  let page = 1;
-  let more = true;
-  while (more && page <= 15) {
-    const { deals, more: hasMore } = await fetchJamesDeals(page, 200);
+  let page = 1, more = true;
+  while (more && page <= 10) {
+    const data = await zohoFetch(`/crm/v6/Deals/search?criteria=(Owner.name:equals:James Rodger)&fields=${DEAL_FIELDS}&per_page=200&page=${page}`);
+    const deals = (data.data as ZohoDeal[] | undefined) || [];
     all.push(...deals);
-    more = hasMore;
+    more = !!(data.info as { more_records?: boolean } | undefined)?.more_records;
     page++;
   }
-  console.log(`[Zoho] Fetched ${all.length} deals for James`);
+  console.log(`[Zoho] Fetched ${all.length} deals`);
   return all;
 }
 
@@ -212,6 +165,59 @@ export function getDealValue(deal: ZohoDeal): number {
   return 0;
 }
 
+export function getLeadPhone(lead: ZohoLead): string | null {
+  return lead.Mobile || lead.Phone || null;
+}
+
 export function isZohoConfigured(): boolean {
   return !!(process.env.ZOHO_CLIENT_ID && process.env.ZOHO_CLIENT_SECRET && process.env.ZOHO_REFRESH_TOKEN);
+}
+
+// --- Cross-referencing helpers ---
+
+export type CrmMatchStatus = 'ordered' | 'in_pipeline' | 'demo_done' | 'no_show' | 'gone_cold' | 'direct_booking' | 'pending';
+
+export function matchEmailToCrm(
+  email: string,
+  leadsByEmail: Map<string, ZohoLead>,
+  dealsByEmail: Map<string, ZohoDeal>,
+  daysSinceCall: number
+): { status: CrmMatchStatus; stage: string | null; value: number | null } {
+  const e = email.toLowerCase();
+
+  // Check deals first (they ordered)
+  const deal = dealsByEmail.get(e);
+  if (deal) {
+    const cat = categorizeDealStage(deal.Stage);
+    if (['shipped', 'post_delivery', 'ready'].includes(cat)) {
+      return { status: 'ordered', stage: deal.Stage, value: getDealValue(deal) };
+    }
+    return { status: 'in_pipeline', stage: deal.Stage, value: getDealValue(deal) };
+  }
+
+  // Check leads
+  const lead = leadsByEmail.get(e);
+  if (lead) {
+    const cat = categorizeLeadStatus(lead.Status);
+    if (cat === 'purchased') return { status: 'ordered', stage: 'Purchased', value: null };
+    if (cat === 'demo_done') return { status: 'demo_done', stage: lead.Status, value: null };
+    if (cat === 'no_show') return { status: 'no_show', stage: 'No Show', value: null };
+    if (cat === 'gone_cold') return { status: 'gone_cold', stage: lead.Status, value: null };
+    return { status: 'in_pipeline', stage: lead.Status || 'Registered', value: null };
+  }
+
+  // Not in CRM at all
+  if (daysSinceCall <= 30) return { status: 'pending', stage: null, value: null };
+  return { status: 'direct_booking', stage: null, value: null };
+}
+
+export function buildEmailMaps(leads: ZohoLead[], deals: ZohoDeal[]): {
+  leadsByEmail: Map<string, ZohoLead>;
+  dealsByEmail: Map<string, ZohoDeal>;
+} {
+  const leadsByEmail = new Map<string, ZohoLead>();
+  leads.forEach(l => { if (l.Email) leadsByEmail.set(l.Email.toLowerCase(), l); });
+  const dealsByEmail = new Map<string, ZohoDeal>();
+  deals.forEach(d => { if (d.Email) dealsByEmail.set(d.Email.toLowerCase(), d); });
+  return { leadsByEmail, dealsByEmail };
 }

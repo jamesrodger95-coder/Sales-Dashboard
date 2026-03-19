@@ -1,103 +1,62 @@
 export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail, extractPhone, extractCountry } from '@/lib/google-calendar';
-import { fetchAllJamesDeals, fetchAllJamesLeads, isZohoConfigured, getDealValue, categorizeStage } from '@/lib/zoho-client';
+import { fetchAllJamesDeals, fetchAllJamesLeads, isZohoConfigured, buildEmailMaps, matchEmailToCrm, CrmMatchStatus } from '@/lib/zoho-client';
 
 export async function GET() {
   try {
     const now = new Date();
-    const threeMonthsAgo = new Date(now.getTime() - 90 * 86400000);
+    const sixtyDaysAgo = new Date(now.getTime() - 60 * 86400000);
 
-    // Fetch calendar calls
-    const events = await fetchCalendarEvents(threeMonthsAgo.toISOString(), now.toISOString());
+    const events = await fetchCalendarEvents(sixtyDaysAgo.toISOString(), now.toISOString());
     const salesCalls = events.filter(isSalesCall);
 
     if (!isZohoConfigured()) {
       return NextResponse.json({
-        zohoConnected: false,
-        totalCalls: salesCalls.length,
+        zohoConnected: false, totalCalls: salesCalls.length,
         records: salesCalls.map(e => ({
-          name: extractLeadName(e), email: getExternalAttendeeEmail(e),
-          date: e.start, status: 'unknown',
+          name: extractLeadName(e), email: getExternalAttendeeEmail(e), date: e.start, status: 'pending' as CrmMatchStatus,
         })),
       });
     }
 
-    // Fetch Zoho data
-    const [leads, deals] = await Promise.all([
-      fetchAllJamesLeads(),
-      fetchAllJamesDeals(),
-    ]);
+    const [leads, deals] = await Promise.all([fetchAllJamesLeads(), fetchAllJamesDeals()]);
+    const { leadsByEmail, dealsByEmail } = buildEmailMaps(leads, deals);
 
-    // Build email lookup maps
-    const leadByEmail = new Map<string, { status: string; name: string }>();
-    leads.forEach(l => {
-      if (l.Email) leadByEmail.set(l.Email.toLowerCase(), { status: l.Lead_Status || 'Unknown', name: l.Full_Name });
-    });
+    // Cross-reference each call
+    const counts: Record<CrmMatchStatus, number> = { ordered: 0, in_pipeline: 0, demo_done: 0, no_show: 0, gone_cold: 0, direct_booking: 0, pending: 0 };
 
-    const dealByEmail = new Map<string, { stage: string; name: string; value: number; category: string }>();
-    deals.forEach(d => {
-      if (d.Email) dealByEmail.set(d.Email.toLowerCase(), {
-        stage: d.Stage, name: d.Deal_Name, value: getDealValue(d), category: categorizeStage(d.Stage),
-      });
-    });
-
-    // Cross-reference
-    let converted = 0, inPipeline = 0, pending = 0, lost = 0;
     const records = salesCalls.map(e => {
-      const email = getExternalAttendeeEmail(e).toLowerCase();
+      const email = getExternalAttendeeEmail(e);
       const daysSince = Math.floor((now.getTime() - new Date(e.start).getTime()) / 86400000);
-
-      let status: string;
-      let crmStage: string | null = null;
-      let orderValue: number | null = null;
-
-      const deal = email ? dealByEmail.get(email) : undefined;
-      const lead = email ? leadByEmail.get(email) : undefined;
-
-      if (deal && ['shipped', 'post_delivery'].includes(deal.category)) {
-        status = 'converted';
-        crmStage = deal.stage;
-        orderValue = deal.value;
-        converted++;
-      } else if (deal) {
-        status = 'in_pipeline';
-        crmStage = deal.stage;
-        orderValue = deal.value;
-        inPipeline++;
-      } else if (lead) {
-        status = 'in_pipeline';
-        crmStage = `Lead: ${lead.status}`;
-        inPipeline++;
-      } else if (daysSince <= 30) {
-        status = 'pending';
-        pending++;
-      } else {
-        status = 'lost';
-        lost++;
-      }
+      const match = matchEmailToCrm(email, leadsByEmail, dealsByEmail, daysSince);
+      counts[match.status]++;
 
       return {
         name: extractLeadName(e),
-        email: getExternalAttendeeEmail(e),
+        email,
         phone: extractPhone(e),
         date: e.start,
         country: extractCountry(e),
-        status,
-        crmStage,
-        orderValue,
+        status: match.status,
+        crmStage: match.stage,
+        orderValue: match.value,
         daysSince,
       };
     });
 
-    const conversionRate = salesCalls.length > 0 ? Math.round((converted / salesCalls.length) * 100) : 0;
+    const conversionRate = salesCalls.length > 0 ? Math.round((counts.ordered / salesCalls.length) * 100) : 0;
+
+    // Direct bookings (in calendar but NOT in Zoho at all)
+    const directBookings = records.filter(r => r.status === 'direct_booking');
 
     return NextResponse.json({
       zohoConnected: true,
       totalCalls: salesCalls.length,
-      converted, inPipeline, pending, lost,
+      ...counts,
       conversionRate,
       records,
+      directBookings,
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Conversion tracking failed';

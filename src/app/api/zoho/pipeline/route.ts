@@ -1,87 +1,87 @@
 export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
-import { fetchAllJamesDeals, fetchAllJamesLeads, isZohoConfigured, getDealValue, categorizeStage } from '@/lib/zoho-client';
+import {
+  fetchAllJamesDeals, fetchAllJamesLeads, isZohoConfigured,
+  getDealValue, categorizeLeadStatus, categorizeDealStage, getLeadPhone,
+} from '@/lib/zoho-client';
 
 export async function GET() {
-  if (!isZohoConfigured()) {
-    return NextResponse.json({ configured: false });
-  }
+  if (!isZohoConfigured()) return NextResponse.json({ configured: false });
+
   try {
-    const [leads, deals] = await Promise.all([
-      fetchAllJamesLeads(),
-      fetchAllJamesDeals(),
-    ]);
-
-    // Lead pipeline
-    const leadsByStatus: Record<string, { count: number; leads: { name: string; email: string | null; country: string | null; created: string }[] }> = {};
-    leads.forEach(l => {
-      const s = l.Lead_Status || 'Unknown';
-      if (!leadsByStatus[s]) leadsByStatus[s] = { count: 0, leads: [] };
-      leadsByStatus[s].count++;
-      if (leadsByStatus[s].leads.length < 20) {
-        leadsByStatus[s].leads.push({ name: l.Full_Name, email: l.Email, country: l.Country, created: l.Created_Time });
-      }
-    });
-
-    // Deal pipeline
-    const dealsByStage: Record<string, { count: number; value: number; category: string; deals: { name: string; value: number; country: string | null; created: string; daysInStage: number }[] }> = {};
+    const [leads, deals] = await Promise.all([fetchAllJamesLeads(), fetchAllJamesDeals()]);
     const now = Date.now();
+
+    // Lead counts by status
+    const leadsByStatus: Record<string, number> = {};
+    leads.forEach(l => { const s = l.Status || 'No Status'; leadsByStatus[s] = (leadsByStatus[s] || 0) + 1; });
+
+    // Deal counts by stage with values
+    const dealsByStage: Record<string, { count: number; value: number; category: string; deals: { name: string; value: number; country: string | null; daysInStage: number }[] }> = {};
     deals.forEach(d => {
-      const s = d.Stage || 'Unknown';
-      const cat = categorizeStage(s);
+      const s = d.Stage;
       const val = getDealValue(d);
-      const daysInStage = Math.floor((now - new Date(d.Modified_Time).getTime()) / 86400000);
-      if (!dealsByStage[s]) dealsByStage[s] = { count: 0, value: 0, category: cat, deals: [] };
+      const days = Math.floor((now - new Date(d.Modified_Time).getTime()) / 86400000);
+      if (!dealsByStage[s]) dealsByStage[s] = { count: 0, value: 0, category: categorizeDealStage(s), deals: [] };
       dealsByStage[s].count++;
       dealsByStage[s].value += val;
-      if (dealsByStage[s].deals.length < 20) {
-        dealsByStage[s].deals.push({ name: d.Deal_Name, value: val, country: d.Country, created: d.Created_Time, daysInStage });
-      }
+      if (dealsByStage[s].deals.length < 20) dealsByStage[s].deals.push({ name: d.Deal_Name, value: val, country: d.Country, daysInStage: days });
     });
 
     // Follow-up flags
-    const redFlags: { name: string; stage: string; days: number; type: string }[] = [];
-    const yellowFlags: { name: string; stage: string; days: number; type: string }[] = [];
+    const redFlags: { name: string; stage: string; days: number; email: string | null; phone: string | null; action: string }[] = [];
+    const yellowFlags: { name: string; stage: string; days: number; email: string | null; phone: string | null; action: string }[] = [];
 
-    // Lead flags
     leads.forEach(l => {
-      const days = Math.floor((now - new Date(l.Created_Time).getTime()) / 86400000);
-      const modDays = Math.floor((now - new Date(l.Modified_Time).getTime()) / 86400000);
-      if ((!l.Lead_Status || l.Lead_Status === 'Not Contacted') && days > 1) {
-        redFlags.push({ name: l.Full_Name, stage: 'Not Contacted', days, type: 'lead' });
-      } else if (l.Lead_Status === 'Attempted to Contact' && modDays > 14) {
-        redFlags.push({ name: l.Full_Name, stage: 'Attempted to Contact', days: modDays, type: 'lead' });
-      } else if (l.Lead_Status === 'Attempted to Contact' && modDays > 7) {
-        yellowFlags.push({ name: l.Full_Name, stage: 'Attempted to Contact', days: modDays, type: 'lead' });
+      const days = Math.floor((now - new Date(l.Modified_Time).getTime()) / 86400000);
+      const cat = categorizeLeadStatus(l.Status);
+      const phone = getLeadPhone(l);
+
+      if (cat === 'pre_purchase' && (!l.Status || l.Status === 'Registered' || l.Status === 'Not Contacted' || l.Status === '-None-') && days > 1) {
+        redFlags.push({ name: l.Full_Name, stage: l.Status || 'Registered', days, email: l.Email, phone, action: 'VA needs to contact' });
+      } else if (l.Status === 'First Contact Made' && days > 10) {
+        redFlags.push({ name: l.Full_Name, stage: 'First Contact Made', days, email: l.Email, phone, action: 'Going cold — follow up or move to No Contact' });
+      } else if (l.Status === 'First Contact Made' && days > 5) {
+        yellowFlags.push({ name: l.Full_Name, stage: 'First Contact Made', days, email: l.Email, phone, action: 'Approaching deadline — follow up' });
+      } else if (cat === 'no_show') {
+        redFlags.push({ name: l.Full_Name, stage: 'No Show', days, email: l.Email, phone, action: 'Rebook demo' });
+      } else if (cat === 'demo_done' && days > 7) {
+        redFlags.push({ name: l.Full_Name, stage: l.Status || 'Demo Completed', days, email: l.Email, phone, action: 'Decision cooling — follow up' });
+      } else if (cat === 'demo_done' && days > 3) {
+        yellowFlags.push({ name: l.Full_Name, stage: l.Status || 'Demo Completed', days, email: l.Email, phone, action: 'Follow up soon' });
       }
     });
 
-    // Deal flags
     deals.forEach(d => {
-      const daysInStage = Math.floor((now - new Date(d.Modified_Time).getTime()) / 86400000);
-      if (d.Stage === 'Awaiting Measurements' && daysInStage > 10) {
-        redFlags.push({ name: d.Deal_Name, stage: d.Stage, days: daysInStage, type: 'deal' });
-      } else if (d.Stage === 'Awaiting Measurements' && daysInStage > 7) {
-        yellowFlags.push({ name: d.Deal_Name, stage: d.Stage, days: daysInStage, type: 'deal' });
+      const days = Math.floor((now - new Date(d.Modified_Time).getTime()) / 86400000);
+      if (d.Stage === 'Awaiting Measurements' && days > 10) {
+        redFlags.push({ name: d.Deal_Name, stage: d.Stage, days, email: d.Email, phone: d.Phone, action: 'Customer disengaging — chase measurements' });
+      } else if (d.Stage === 'Awaiting Measurements' && days > 7) {
+        yellowFlags.push({ name: d.Deal_Name, stage: d.Stage, days, email: d.Email, phone: d.Phone, action: 'Gentle reminder for measurements' });
       }
-      if (d.Stage === 'In Manufacturing' && daysInStage > 105) { // 15 weeks
-        redFlags.push({ name: d.Deal_Name, stage: d.Stage, days: daysInStage, type: 'deal' });
+      if (d.Stage === 'In Manufacturing' && days > 105) {
+        redFlags.push({ name: d.Deal_Name, stage: d.Stage, days, email: d.Email, phone: d.Phone, action: 'Over 15 weeks — proactive update needed' });
       }
-      if (d.Stage === 'No Response from Customer' || d.Stage === 'LATE') {
-        redFlags.push({ name: d.Deal_Name, stage: d.Stage, days: daysInStage, type: 'deal' });
+      if (d.Stage === 'No Response from Customer') {
+        redFlags.push({ name: d.Deal_Name, stage: d.Stage, days, email: d.Email, phone: d.Phone, action: 'Re-engage customer' });
+      }
+      if (d.Stage === 'Measurement Issues') {
+        yellowFlags.push({ name: d.Deal_Name, stage: d.Stage, days, email: d.Email, phone: d.Phone, action: 'Resolve measurement issue' });
       }
     });
 
-    const totalPipelineValue = deals.reduce((sum, d) => sum + getDealValue(d), 0);
+    // Sort flags by urgency (most days first)
+    redFlags.sort((a, b) => b.days - a.days);
+    yellowFlags.sort((a, b) => b.days - a.days);
 
     return NextResponse.json({
       configured: true,
       totalLeads: leads.length,
       totalDeals: deals.length,
-      totalPipelineValue: Math.round(totalPipelineValue * 100) / 100,
+      totalPipelineValue: Math.round(deals.reduce((s, d) => s + getDealValue(d), 0)),
       leadsByStatus,
       dealsByStage,
-      redFlags: redFlags.slice(0, 20),
+      redFlags: redFlags.slice(0, 30),
       yellowFlags: yellowFlags.slice(0, 20),
     });
   } catch (error: unknown) {

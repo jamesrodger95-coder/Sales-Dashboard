@@ -10,17 +10,21 @@ interface ConversionRecord {
 
 interface ConversionData {
   zohoConnected: boolean;
-  totalCalls: number; converted: number; inPipeline: number; pending: number; lost: number;
+  totalCalls: number; ordered: number; in_pipeline: number; demo_done: number;
+  no_show: number; gone_cold: number; direct_booking: number; pending: number;
   conversionRate: number;
   records: ConversionRecord[];
+  directBookings: ConversionRecord[];
 }
 
-const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
-  converted: { bg: 'bg-success/10', text: 'text-success', label: 'Ordered' },
-  in_pipeline: { bg: 'bg-data-blue/10', text: 'text-data-blue', label: 'In Pipeline' },
-  pending: { bg: 'bg-warning/10', text: 'text-warning', label: 'Pending' },
-  lost: { bg: 'bg-danger/10', text: 'text-danger', label: 'No Match' },
-  unknown: { bg: 'bg-dim/10', text: 'text-dim', label: 'Unknown' },
+const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string; dotColor: string }> = {
+  ordered: { bg: 'bg-success/10', text: 'text-success', label: 'Ordered', dotColor: 'bg-success' },
+  in_pipeline: { bg: 'bg-data-blue/10', text: 'text-data-blue', label: 'In Pipeline', dotColor: 'bg-data-blue' },
+  demo_done: { bg: 'bg-[#A78BFA]/10', text: 'text-[#A78BFA]', label: 'Demo Done', dotColor: 'bg-[#A78BFA]' },
+  no_show: { bg: 'bg-danger/10', text: 'text-danger', label: 'No Show', dotColor: 'bg-danger' },
+  gone_cold: { bg: 'bg-warning/10', text: 'text-warning', label: 'Gone Cold', dotColor: 'bg-warning' },
+  direct_booking: { bg: 'bg-dim/10', text: 'text-muted', label: 'Direct', dotColor: 'bg-dim' },
+  pending: { bg: 'bg-warning/10', text: 'text-warning', label: 'Pending', dotColor: 'bg-warning' },
 };
 
 export default function ConversionsPage() {
@@ -29,45 +33,56 @@ export default function ConversionsPage() {
   const [filter, setFilter] = useState('all');
 
   useEffect(() => {
-    fetch('/api/conversions')
-      .then(r => r.json())
-      .then(d => { if (!d.error) setData(d); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    fetch('/api/conversions').then(r => r.json()).then(d => { if (!d.error) setData(d); }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
   const filtered = data?.records?.filter(r => filter === 'all' || r.status === filter) || [];
 
   return (
     <div className="px-5 py-6 max-w-[1400px] mx-auto">
-      {/* Funnel KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-8">
+      {/* Funnel */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 mb-8">
         {[
           { label: 'Total Calls', val: data?.totalCalls, color: 'text-white' },
-          { label: 'In Pipeline', val: data?.inPipeline, color: 'text-data-blue' },
-          { label: 'Converted', val: data?.converted, color: 'text-success' },
-          { label: 'Pending', val: data?.pending, color: 'text-warning' },
-          { label: 'Conversion Rate', val: data ? `${data.conversionRate}%` : '--', color: 'text-white' },
+          { label: 'Ordered', val: data?.ordered, color: 'text-success' },
+          { label: 'In Pipeline', val: data?.in_pipeline, color: 'text-data-blue' },
+          { label: 'Demo Done', val: data?.demo_done, color: 'text-[#A78BFA]' },
+          { label: 'No Show', val: data?.no_show, color: 'text-danger' },
+          { label: 'Gone Cold', val: data?.gone_cold, color: 'text-warning' },
+          { label: 'Direct', val: data?.direct_booking, color: 'text-muted' },
+          { label: 'Conv. Rate', val: data ? `${data.conversionRate}%` : '--', color: 'text-white' },
         ].map((kpi, i) => (
-          <div key={i} className="rounded-2xl border border-[#1A1A1A] bg-surface p-5 text-center">
-            <p className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] mb-2">{kpi.label}</p>
-            <p className={`text-3xl font-light tabular-nums ${kpi.color}`}>{loading ? '--' : kpi.val ?? '--'}</p>
+          <div key={i} className="rounded-2xl border border-[#1A1A1A] bg-surface p-4 text-center">
+            <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-[#555] mb-1">{kpi.label}</p>
+            <p className={`text-2xl font-light tabular-nums ${kpi.color}`}>{loading ? '--' : kpi.val ?? 0}</p>
           </div>
         ))}
       </div>
 
-      {!data?.zohoConnected && !loading && (
-        <div className="p-4 rounded-2xl bg-surface border border-dashed border-[#333] mb-6 flex items-center gap-2">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-dim"><rect x="2" y="5" width="10" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2" /><path d="M4.5 5V3.5a2.5 2.5 0 015 0V5" stroke="currentColor" strokeWidth="1.2" /></svg>
-          <p className="text-xs text-dim">Connect Zoho CRM in Settings for full conversion tracking</p>
+      {/* Direct bookings alert */}
+      {data?.directBookings && data.directBookings.length > 0 && (
+        <div className="rounded-2xl border border-[#333] bg-surface p-4 mb-6">
+          <h3 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] mb-3">
+            Direct Bookings — No CRM Record ({data.directBookings.length})
+          </h3>
+          <p className="text-xs text-dim mb-3">These people booked via Calendly but aren&apos;t in Zoho. Consider adding them.</p>
+          <div className="space-y-1">
+            {data.directBookings.slice(0, 5).map((r, i) => (
+              <div key={i} className="flex items-center gap-3 py-1.5 text-xs">
+                <span className="text-white">{r.name}</span>
+                <span className="text-dim">{r.email}</span>
+                <span className="text-dim ml-auto">{new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       {/* Filters */}
-      <div className="flex gap-1 mb-6">
-        {['all', 'converted', 'in_pipeline', 'pending', 'lost'].map(f => (
-          <button key={f} onClick={() => setFilter(f)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all capitalize ${filter === f ? 'bg-white text-black' : 'text-dim hover:text-muted'}`}>
-            {f === 'in_pipeline' ? 'In Pipeline' : f === 'all' ? 'All' : f}
+      <div className="flex gap-1 mb-6 overflow-x-auto pb-1">
+        {['all', 'ordered', 'in_pipeline', 'demo_done', 'no_show', 'gone_cold', 'direct_booking', 'pending'].map(f => (
+          <button key={f} onClick={() => setFilter(f)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${filter === f ? 'bg-white text-black' : 'text-dim hover:text-muted'}`}>
+            {STATUS_CONFIG[f]?.label || 'All'}
           </button>
         ))}
       </div>
@@ -75,7 +90,7 @@ export default function ConversionsPage() {
       {/* Table */}
       <div className="rounded-2xl border border-[#1A1A1A] bg-surface">
         {loading ? (
-          <div className="p-6 space-y-0">{[...Array(8)].map((_, i) => <div key={i} className="h-12 skeleton" style={{ animationDelay: `${i * 60}ms` }} />)}</div>
+          <div className="p-6 space-y-0">{[...Array(8)].map((_, i) => <div key={i} className="h-12 skeleton" style={{ animationDelay: `${i * 50}ms` }} />)}</div>
         ) : filtered.length === 0 ? (
           <div className="p-12 text-center text-dim text-sm">No records</div>
         ) : (
@@ -83,29 +98,29 @@ export default function ConversionsPage() {
             <thead>
               <tr className="text-left border-b border-[#1A1A1A]">
                 <th className="py-3 pl-6 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">Name</th>
-                <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">Call Date</th>
-                <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">Status</th>
-                <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] hidden md:table-cell">CRM Stage</th>
+                <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">Date</th>
+                <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">CRM Status</th>
+                <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] hidden md:table-cell">Stage</th>
                 <th className="py-3 pr-6 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] hidden sm:table-cell">Value</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((r, i) => {
-                const style = STATUS_STYLES[r.status] || STATUS_STYLES.unknown;
+                const cfg = STATUS_CONFIG[r.status] || STATUS_CONFIG.pending;
                 return (
-                  <tr key={i} className="fade-in-row border-b border-[#1A1A1A]/50 last:border-0 hover:bg-white/[0.02] transition-colors" style={{ animationDelay: `${i * 30}ms` }}>
+                  <tr key={i} className="fade-in-row border-b border-[#1A1A1A]/50 last:border-0 hover:bg-white/[0.02]" style={{ animationDelay: `${i * 25}ms` }}>
                     <td className="py-3 pl-6">
                       <p className="text-white font-medium">{r.name}</p>
                       <p className="text-[11px] text-dim">{r.email}</p>
                     </td>
-                    <td className="py-3 text-muted text-xs">
+                    <td className="py-3 text-xs text-muted">
                       {new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
                       <span className="text-dim ml-1">{r.daysSince}d</span>
                     </td>
                     <td className="py-3">
-                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium ${style.bg} ${style.text}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${style.text.replace('text-', 'bg-')}`} />
-                        {style.label}
+                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium ${cfg.bg} ${cfg.text}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${cfg.dotColor}`} />
+                        {cfg.label}
                       </span>
                     </td>
                     <td className="py-3 text-xs text-dim hidden md:table-cell">{r.crmStage || '--'}</td>

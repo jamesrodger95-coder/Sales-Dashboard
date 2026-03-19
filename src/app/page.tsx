@@ -19,7 +19,9 @@ interface ZohoSummary {
   activeLeads: number;
   conversionRate: number;
   followUpsNeeded: number;
-  stageSummary: Record<string, number>;
+  leadSummary: Record<string, number>;
+  dealSummary: Record<string, number>;
+  ordersThisMonth: number;
 }
 
 interface DashboardData {
@@ -223,20 +225,23 @@ export default function Dashboard() {
             Pipeline Overview
             <Link href="/pipeline" className="text-muted hover:text-white transition-colors ml-3 normal-case tracking-normal">View full pipeline</Link>
           </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {[
-              { label: 'Pre-Purchase', key: 'pre_purchase', color: 'bg-data-blue' },
-              { label: 'In Production', key: 'in_production', color: 'bg-warning' },
-              { label: 'Shipped', key: 'shipped', color: 'bg-success' },
-              { label: 'Post-Delivery', key: 'post_delivery', color: 'bg-success/60' },
-              { label: 'Issues', key: 'problem', color: 'bg-danger' },
+              { label: 'Demo Done', key: 'demo_done', src: 'lead', color: 'bg-[#A78BFA]' },
+              { label: 'No Show', key: 'no_show', src: 'lead', color: 'bg-danger' },
+              { label: 'Awaiting', key: 'awaiting', src: 'deal', color: 'bg-data-blue' },
+              { label: 'Production', key: 'in_progress', src: 'deal', color: 'bg-warning' },
+              { label: 'Shipped', key: 'shipped', src: 'deal', color: 'bg-success' },
+              { label: 'Issues', key: 'problem', src: 'deal', color: 'bg-danger' },
             ].map(s => (
               <Link key={s.key} href="/pipeline" className="rounded-2xl border border-[#1A1A1A] bg-surface p-4 hover:bg-surface-hover transition-colors">
                 <div className="flex items-center gap-2 mb-2">
                   <span className={`w-2 h-2 rounded-full ${s.color}`} />
                   <span className="text-[11px] text-dim">{s.label}</span>
                 </div>
-                <p className="text-2xl font-light text-white tabular-nums">{dashboard.zoho?.stageSummary?.[s.key] || 0}</p>
+                <p className="text-2xl font-light text-white tabular-nums">
+                  {(s.src === 'lead' ? dashboard.zoho?.leadSummary?.[s.key] : dashboard.zoho?.dealSummary?.[s.key]) || 0}
+                </p>
               </Link>
             ))}
           </div>

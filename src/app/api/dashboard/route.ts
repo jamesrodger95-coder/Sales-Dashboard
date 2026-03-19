@@ -134,39 +134,58 @@ export async function GET() {
 
     console.log(`[Dashboard] Sales calls: ${monthlySalesCalls.length}, Total 3mo: ${salesCalls.length}, Today: ${todaySchedule.length}, Tomorrow: ${tomorrowSchedule.length}`);
 
-    // Zoho CRM data (non-blocking — won't break dashboard if Zoho fails)
+    // Zoho CRM data (non-blocking)
     let zoho = null;
     try {
-      const { isZohoConfigured, fetchAllJamesDeals, fetchAllJamesLeads, getDealValue, categorizeStage } = await import('@/lib/zoho-client');
+      const { isZohoConfigured, fetchAllJamesDeals, fetchAllJamesLeads, getDealValue, categorizeLeadStatus, categorizeDealStage, buildEmailMaps, matchEmailToCrm } = await import('@/lib/zoho-client');
       if (isZohoConfigured()) {
         const [leads, deals] = await Promise.all([fetchAllJamesLeads(), fetchAllJamesDeals()]);
         const totalValue = deals.reduce((s: number, d) => s + getDealValue(d), 0);
-        const activeLeads = leads.filter(l => l.Lead_Status && !['Won', 'Lost Lead', 'Junk Lead'].includes(l.Lead_Status)).length;
 
-        // Conversion: match calendar emails to Zoho
-        const dealEmails = new Set(deals.map(d => d.Email?.toLowerCase()).filter(Boolean));
-        const calEmails = monthlySalesCalls.map(e => getExternalAttendeeEmail(e).toLowerCase()).filter(Boolean);
-        const convertedCount = calEmails.filter(e => dealEmails.has(e)).length;
-        const conversionRate = calEmails.length > 0 ? Math.round((convertedCount / calEmails.length) * 100) : 0;
+        // Active leads = pre-purchase + demo_done stages
+        const activeLeads = leads.filter(l => {
+          const cat = categorizeLeadStatus(l.Status);
+          return ['pre_purchase', 'demo_done'].includes(cat);
+        }).length;
+
+        // Conversion rate: 60-day calendar calls matched to deals
+        const { leadsByEmail, dealsByEmail } = buildEmailMaps(leads, deals);
+        const sixtyDayEvents = allEvents.filter(e => {
+          const d = new Date(e.start);
+          return d >= new Date(now.getTime() - 60 * 86400000) && isSalesCall(e);
+        });
+        let ordered = 0;
+        sixtyDayEvents.forEach(e => {
+          const email = getExternalAttendeeEmail(e).toLowerCase();
+          if (email) {
+            const m = matchEmailToCrm(email, leadsByEmail, dealsByEmail, 0);
+            if (m.status === 'ordered') ordered++;
+          }
+        });
+        const conversionRate = sixtyDayEvents.length > 0 ? Math.round((ordered / sixtyDayEvents.length) * 100) : 0;
 
         // Follow-up counts
         const nowMs = Date.now();
         let redCount = 0;
         leads.forEach(l => {
-          const days = Math.floor((nowMs - new Date(l.Created_Time).getTime()) / 86400000);
-          if ((!l.Lead_Status || l.Lead_Status === 'Not Contacted') && days > 1) redCount++;
+          const days = Math.floor((nowMs - new Date(l.Modified_Time).getTime()) / 86400000);
+          const cat = categorizeLeadStatus(l.Status);
+          if (cat === 'no_show') redCount++;
+          else if (cat === 'demo_done' && days > 7) redCount++;
+          else if (l.Status === 'First Contact Made' && days > 10) redCount++;
         });
         deals.forEach(d => {
           const days = Math.floor((nowMs - new Date(d.Modified_Time).getTime()) / 86400000);
-          if ((d.Stage === 'Awaiting Measurements' && days > 10) || d.Stage === 'LATE' || d.Stage === 'No Response from Customer') redCount++;
+          if (d.Stage === 'Awaiting Measurements' && days > 10) redCount++;
+          if (d.Stage === 'In Manufacturing' && days > 105) redCount++;
+          if (d.Stage === 'No Response from Customer') redCount++;
         });
 
-        // Stage summary
-        const stageSummary: Record<string, number> = {};
-        deals.forEach(d => {
-          const cat = categorizeStage(d.Stage);
-          stageSummary[cat] = (stageSummary[cat] || 0) + 1;
-        });
+        // Pipeline summary
+        const leadSummary: Record<string, number> = {};
+        leads.forEach(l => { const c = categorizeLeadStatus(l.Status); leadSummary[c] = (leadSummary[c] || 0) + 1; });
+        const dealSummary: Record<string, number> = {};
+        deals.forEach(d => { const c = categorizeDealStage(d.Stage); dealSummary[c] = (dealSummary[c] || 0) + 1; });
 
         zoho = {
           connected: true,
@@ -176,9 +195,14 @@ export async function GET() {
           activeLeads,
           conversionRate,
           followUpsNeeded: redCount,
-          stageSummary,
+          leadSummary,
+          dealSummary,
+          ordersThisMonth: deals.filter(d => {
+            const created = new Date(d.Created_Time);
+            return created >= monthStart && created <= monthEnd;
+          }).length,
         };
-        console.log(`[Dashboard] Zoho: ${leads.length} leads, ${deals.length} deals, £${Math.round(totalValue)}`);
+        console.log(`[Dashboard] Zoho: ${leads.length} leads, ${deals.length} deals, £${Math.round(totalValue)}, ${conversionRate}% conversion`);
       }
     } catch (zohoErr) {
       console.error('[Dashboard] Zoho error (non-fatal):', zohoErr);
