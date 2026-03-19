@@ -134,6 +134,56 @@ export async function GET() {
 
     console.log(`[Dashboard] Sales calls: ${monthlySalesCalls.length}, Total 3mo: ${salesCalls.length}, Today: ${todaySchedule.length}, Tomorrow: ${tomorrowSchedule.length}`);
 
+    // Zoho CRM data (non-blocking — won't break dashboard if Zoho fails)
+    let zoho = null;
+    try {
+      const { isZohoConfigured, fetchAllJamesDeals, fetchAllJamesLeads, getDealValue, categorizeStage } = await import('@/lib/zoho-client');
+      if (isZohoConfigured()) {
+        const [leads, deals] = await Promise.all([fetchAllJamesLeads(), fetchAllJamesDeals()]);
+        const totalValue = deals.reduce((s: number, d) => s + getDealValue(d), 0);
+        const activeLeads = leads.filter(l => l.Lead_Status && !['Won', 'Lost Lead', 'Junk Lead'].includes(l.Lead_Status)).length;
+
+        // Conversion: match calendar emails to Zoho
+        const dealEmails = new Set(deals.map(d => d.Email?.toLowerCase()).filter(Boolean));
+        const calEmails = monthlySalesCalls.map(e => getExternalAttendeeEmail(e).toLowerCase()).filter(Boolean);
+        const convertedCount = calEmails.filter(e => dealEmails.has(e)).length;
+        const conversionRate = calEmails.length > 0 ? Math.round((convertedCount / calEmails.length) * 100) : 0;
+
+        // Follow-up counts
+        const nowMs = Date.now();
+        let redCount = 0;
+        leads.forEach(l => {
+          const days = Math.floor((nowMs - new Date(l.Created_Time).getTime()) / 86400000);
+          if ((!l.Lead_Status || l.Lead_Status === 'Not Contacted') && days > 1) redCount++;
+        });
+        deals.forEach(d => {
+          const days = Math.floor((nowMs - new Date(d.Modified_Time).getTime()) / 86400000);
+          if ((d.Stage === 'Awaiting Measurements' && days > 10) || d.Stage === 'LATE' || d.Stage === 'No Response from Customer') redCount++;
+        });
+
+        // Stage summary
+        const stageSummary: Record<string, number> = {};
+        deals.forEach(d => {
+          const cat = categorizeStage(d.Stage);
+          stageSummary[cat] = (stageSummary[cat] || 0) + 1;
+        });
+
+        zoho = {
+          connected: true,
+          totalLeads: leads.length,
+          totalDeals: deals.length,
+          totalValue: Math.round(totalValue),
+          activeLeads,
+          conversionRate,
+          followUpsNeeded: redCount,
+          stageSummary,
+        };
+        console.log(`[Dashboard] Zoho: ${leads.length} leads, ${deals.length} deals, £${Math.round(totalValue)}`);
+      }
+    } catch (zohoErr) {
+      console.error('[Dashboard] Zoho error (non-fatal):', zohoErr);
+    }
+
     return NextResponse.json({
       kpis: {
         callsThisMonth: monthlySalesCalls.length,
@@ -145,13 +195,13 @@ export async function GET() {
       todaySchedule,
       tomorrowSchedule,
       month: now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
-      // Analytics data included
       analytics: {
         weeklyVolume, dayBreakdown, timeSlots, monthlyComparison,
         busiestDay, busiestTime: timeLabels[busiestTime],
         totalCancellations: cancelled.length,
         totalCalls: salesCalls.length,
       },
+      zoho,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Dashboard data failed';

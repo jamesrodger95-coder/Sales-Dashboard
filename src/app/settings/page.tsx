@@ -53,13 +53,13 @@ export default function SettingsPage() {
 
             <div className="p-5 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="w-2 h-2 rounded-full bg-dim" />
+                <span className="w-2 h-2 rounded-full bg-success" />
                 <div>
                   <h3 className="text-sm font-medium text-white">Zoho CRM</h3>
-                  <p className="text-xs text-dim mt-0.5">Orders, pipeline stages, conversion tracking, follow-ups</p>
+                  <p className="text-xs text-dim mt-0.5">Pipeline, leads, deals, conversion tracking — Owner: James Rodger</p>
                 </div>
               </div>
-              <span className="text-[10px] text-dim border border-[#333] rounded-full px-2 py-0.5">Coming Soon</span>
+              <span className="text-xs text-success">Connected</span>
             </div>
           </div>
         </div>

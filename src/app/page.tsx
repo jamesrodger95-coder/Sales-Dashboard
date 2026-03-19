@@ -11,12 +11,24 @@ import { CallRecord, ScheduleItem, AnalyticsData } from '@/lib/types';
 
 type SyncState = 'idle' | 'syncing' | 'synced' | 'error';
 
+interface ZohoSummary {
+  connected: boolean;
+  totalLeads: number;
+  totalDeals: number;
+  totalValue: number;
+  activeLeads: number;
+  conversionRate: number;
+  followUpsNeeded: number;
+  stageSummary: Record<string, number>;
+}
+
 interface DashboardData {
   kpis: { callsThisMonth: number; demosThisWeek: number; cancellations: number; upcomingDemos: number };
   calls: CallRecord[];
   todaySchedule: ScheduleItem[];
   tomorrowSchedule: ScheduleItem[];
   month: string;
+  zoho?: ZohoSummary | null;
 }
 
 export default function Dashboard() {
@@ -52,13 +64,23 @@ export default function Dashboard() {
   return (
     <div className="px-5 py-6 max-w-[1400px] mx-auto">
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-2">
+      {/* KPIs — Calendar */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
         <KPICard title="Calls This Month" value={kpis?.callsThisMonth ?? '--'} loading={loading} href="/calls" />
         <KPICard title="Demos This Week" value={kpis?.demosThisWeek ?? '--'} status="success" loading={loading} href="/calls" />
-        <KPICard title="Cancellations" value={kpis?.cancellations ?? '--'} status="danger" loading={loading} subtitle="Full no-show tracking with Zoho CRM" badge="CRM soon" href="/calls" />
+        <KPICard title="Cancellations" value={kpis?.cancellations ?? '--'} status="danger" loading={loading} href="/calls" />
         <KPICard title="Upcoming Demos" value={kpis?.upcomingDemos ?? '--'} status="warning" loading={loading} subtitle="Next 7 days" href="/calls" />
       </div>
+
+      {/* KPIs — CRM (Zoho) */}
+      {dashboard?.zoho?.connected && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-2">
+          <KPICard title="Pipeline Value" value={`£${(dashboard.zoho.totalValue || 0).toLocaleString()}`} loading={loading} href="/pipeline" />
+          <KPICard title="Conversion Rate" value={`${dashboard.zoho.conversionRate || 0}%`} loading={loading} href="/conversions" />
+          <KPICard title="Active Leads" value={dashboard.zoho.activeLeads ?? '--'} loading={loading} href="/pipeline" />
+          <KPICard title="Follow-Ups" value={dashboard.zoho.followUpsNeeded ?? '--'} status="danger" loading={loading} href="/pipeline" />
+        </div>
+      )}
 
       <SyncStatus status={syncState} onRefresh={loadData} />
 
@@ -194,31 +216,40 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* CRM Intelligence */}
-      <div className="mb-6">
-        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-4">CRM Intelligence — Coming Soon</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          {[
-            { title: 'Pipeline Stages', desc: 'Registered to Shipped' },
-            { title: 'Conversion Tracking', desc: 'Calls to orders' },
-            { title: 'Revenue', desc: 'Order totals and trends' },
-            { title: 'Follow-Up Intel', desc: 'Stage-based follow-ups' },
-            { title: 'No-Show Tracking', desc: 'True no-shows vs cancellations' },
-          ].map(card => (
-            <div key={card.title} className="rounded-2xl border border-dashed border-[#333] bg-surface/40 p-5 opacity-40">
-              <div className="flex items-center gap-2 mb-2">
-                <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className="text-dim">
-                  <rect x="2" y="5" width="10" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
-                  <path d="M4.5 5V3.5a2.5 2.5 0 015 0V5" stroke="currentColor" strokeWidth="1.2" />
-                </svg>
-                <h3 className="text-[11px] font-medium text-muted">{card.title}</h3>
-              </div>
-              <p className="text-[10px] text-dim">{card.desc}</p>
-              <p className="text-[9px] text-dim mt-2 pt-2 border-t border-[#222]">Connect Zoho CRM</p>
-            </div>
-          ))}
+      {/* CRM Pipeline Summary */}
+      {dashboard?.zoho?.connected ? (
+        <div className="mb-6">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-4">
+            Pipeline Overview
+            <Link href="/pipeline" className="text-muted hover:text-white transition-colors ml-3 normal-case tracking-normal">View full pipeline</Link>
+          </h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            {[
+              { label: 'Pre-Purchase', key: 'pre_purchase', color: 'bg-data-blue' },
+              { label: 'In Production', key: 'in_production', color: 'bg-warning' },
+              { label: 'Shipped', key: 'shipped', color: 'bg-success' },
+              { label: 'Post-Delivery', key: 'post_delivery', color: 'bg-success/60' },
+              { label: 'Issues', key: 'problem', color: 'bg-danger' },
+            ].map(s => (
+              <Link key={s.key} href="/pipeline" className="rounded-2xl border border-[#1A1A1A] bg-surface p-4 hover:bg-surface-hover transition-colors">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className={`w-2 h-2 rounded-full ${s.color}`} />
+                  <span className="text-[11px] text-dim">{s.label}</span>
+                </div>
+                <p className="text-2xl font-light text-white tabular-nums">{dashboard.zoho?.stageSummary?.[s.key] || 0}</p>
+              </Link>
+            ))}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="mb-6">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-4">CRM Intelligence</h2>
+          <div className="rounded-2xl border border-dashed border-[#333] bg-surface/40 p-6 text-center opacity-60">
+            <p className="text-sm text-muted">Zoho CRM connecting...</p>
+            <p className="text-xs text-dim mt-1">Pipeline, conversions, and follow-ups will appear here</p>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="border-t border-[#1A1A1A] pt-4 pb-8 flex items-center justify-between">
