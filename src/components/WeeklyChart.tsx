@@ -10,7 +10,13 @@ interface WeeklyChartProps {
 
 export default function WeeklyChart({ data, loading }: WeeklyChartProps) {
   if (loading) {
-    return <div className="h-52 bg-subtle/30 rounded-xl animate-pulse" />;
+    return (
+      <div className="h-52 flex items-end gap-3 px-4 pb-6">
+        {[40, 65, 50, 80, 55, 70, 45, 90].map((h, i) => (
+          <div key={i} className="flex-1 skeleton" style={{ height: `${h}%`, animationDelay: `${i * 100}ms` }} />
+        ))}
+      </div>
+    );
   }
 
   if (data.length === 0) {
@@ -47,7 +53,14 @@ export default function WeeklyChart({ data, loading }: WeeklyChartProps) {
           }}
           labelStyle={{ color: '#888888', marginBottom: '4px' }}
         />
-        <Bar dataKey="calls" fill="#60A5FA" radius={[6, 6, 0, 0]} maxBarSize={48} />
+        <Bar
+          dataKey="calls"
+          fill="#60A5FA"
+          radius={[6, 6, 0, 0]}
+          maxBarSize={48}
+          animationDuration={800}
+          animationEasing="ease-out"
+        />
       </BarChart>
     </ResponsiveContainer>
   );

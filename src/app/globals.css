@@ -15,12 +15,10 @@ body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
 }
 
-/* Tabular numbers for data */
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
 
-/* Scrollbar — minimal */
 ::-webkit-scrollbar {
   width: 4px;
 }
@@ -35,7 +33,45 @@ body {
   background: #333333;
 }
 
-/* Selection */
 ::selection {
   background: rgba(255, 255, 255, 0.15);
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #1A1A1A 25%, #222222 50%, #1A1A1A 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 8px;
+}
+
+/* Staggered row fade-in */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-in-row {
+  animation: fadeInUp 0.3s ease-out both;
+}
+
+/* Splash fade */
+@keyframes splashFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.splash-text {
+  animation: splashFadeIn 0.6s ease-out both;
+}
+.splash-sub {
+  animation: splashFadeIn 0.6s ease-out 0.2s both;
 }

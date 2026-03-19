@@ -10,9 +10,18 @@ interface CallListProps {
 export default function CallList({ calls, loading }: CallListProps) {
   if (loading) {
     return (
-      <div className="space-y-0">
+      <div className="-mx-6">
+        <div className="px-6 pb-3 flex gap-8">
+          <div className="skeleton h-3 w-12" />
+          <div className="skeleton h-3 w-20" />
+          <div className="skeleton h-3 w-10" />
+        </div>
         {[...Array(6)].map((_, i) => (
-          <div key={i} className="h-11 bg-subtle/50 animate-pulse" style={{ animationDelay: `${i * 80}ms` }} />
+          <div key={i} className="px-6 py-3 flex gap-8" style={{ animationDelay: `${i * 100}ms` }}>
+            <div className="skeleton h-4 w-28" />
+            <div className="skeleton h-4 w-24" />
+            <div className="skeleton h-4 w-14" />
+          </div>
         ))}
       </div>
     );
@@ -41,9 +50,10 @@ export default function CallList({ calls, loading }: CallListProps) {
           {calls.map((call, i) => (
             <tr
               key={i}
-              className={`transition-colors hover:bg-surface-hover ${
+              className={`fade-in-row transition-colors hover:bg-surface-hover ${
                 i % 2 === 0 ? 'bg-transparent' : 'bg-white/[0.02]'
               }`}
+              style={{ animationDelay: `${i * 50}ms` }}
             >
               <td className="py-3 pl-6 text-white font-medium">{call.name}</td>
               <td className="py-3 text-muted tabular-nums text-xs">

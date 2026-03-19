@@ -16,10 +16,20 @@ interface ScheduleListProps {
 export default function ScheduleList({ items, title, loading }: ScheduleListProps) {
   if (loading) {
     return (
-      <div className="space-y-3">
-        {[...Array(3)].map((_, i) => (
-          <div key={i} className="h-12 bg-subtle/50 rounded-xl animate-pulse" style={{ animationDelay: `${i * 80}ms` }} />
-        ))}
+      <div>
+        <div className="skeleton h-3 w-16 mb-4" />
+        <div className="space-y-3">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="flex items-center gap-4 py-3">
+              <div className="skeleton h-4 w-12" />
+              <div className="w-px h-8 bg-subtle/30" />
+              <div className="flex-1 space-y-1.5">
+                <div className="skeleton h-4 w-48" />
+                <div className="skeleton h-3 w-24" />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -32,7 +42,11 @@ export default function ScheduleList({ items, title, loading }: ScheduleListProp
       ) : (
         <div className="space-y-2">
           {items.map((item, i) => (
-            <div key={i} className="flex items-center gap-4 py-3 border-b border-subtle/60 last:border-0">
+            <div
+              key={i}
+              className="fade-in-row flex items-center gap-4 py-3 border-b border-subtle/60 last:border-0"
+              style={{ animationDelay: `${i * 50}ms` }}
+            >
               <span className="text-sm text-muted tabular-nums min-w-[50px] font-medium">{item.time}</span>
               <div className="w-px h-8 bg-subtle" />
               <div className="flex-1 min-w-0">

@@ -26,20 +26,21 @@ export default function KPICard({ title, value, subtitle, status = 'default', lo
         {status !== 'default' && (
           <span className={`w-2 h-2 rounded-full ${dotColor}`} />
         )}
-        <p className="text-xs font-medium uppercase tracking-heading text-muted">{title}</p>
-        {badge && (
+        {loading ? (
+          <div className="skeleton h-3 w-24" />
+        ) : (
+          <p className="text-xs font-medium uppercase tracking-heading text-muted">{title}</p>
+        )}
+        {badge && !loading && (
           <span className="ml-auto text-[10px] text-dim border border-subtle rounded-full px-2 py-0.5">{badge}</span>
         )}
       </div>
       {loading ? (
-        <div className="h-12 w-20 bg-subtle rounded-lg animate-pulse" />
+        <div className="skeleton h-11 w-16 mt-1" />
       ) : (
         <p className="text-kpi-sm lg:text-kpi text-white tabular-nums">{value}</p>
       )}
-      {subtitle && <p className="text-[11px] text-dim mt-3 leading-relaxed">{subtitle}</p>}
-      {href && (
-        <p className="text-[11px] text-muted mt-3 opacity-0 group-hover:opacity-100 transition-opacity">View details</p>
-      )}
+      {subtitle && !loading && <p className="text-[11px] text-dim mt-3 leading-relaxed">{subtitle}</p>}
     </div>
   );
 
