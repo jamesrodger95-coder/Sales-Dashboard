@@ -31,15 +31,9 @@ export default function TopNav() {
         <div className="h-full max-w-[1400px] mx-auto px-6 flex items-center justify-between">
 
           {/* Left: Logo — SVG monogram + text matching brand identity */}
-          <Link href="/" className="flex items-center gap-2.5 flex-shrink-0">
-            <svg width="32" height="28" viewBox="0 0 64 52" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="bd monogram">
-              <path d="M16 4C16 4 16 20 16 28C16 36.837 23.163 44 32 44C36.418 44 40.418 42.209 43.314 39.314" stroke="black" strokeWidth="7" strokeLinecap="round" />
-              <path d="M48 4C48 4 48 20 48 28C48 36.837 40.837 44 32 44C27.582 44 23.582 42.209 20.686 39.314" stroke="black" strokeWidth="7" strokeLinecap="round" />
-              <circle cx="10" cy="6" r="5" fill="black" />
-              <circle cx="54" cy="6" r="5" fill="black" />
-            </svg>
-            <span className="text-[17px] font-bold text-black tracking-[-0.01em]">
-              Bryant Dental<span className="text-[#999]">.</span>
+          <Link href="/" className="flex-shrink-0">
+            <span className="text-[22px] font-bold text-black tracking-[-0.02em]">
+              Bryant Dental<span className="text-black">.</span>
             </span>
           </Link>
 
