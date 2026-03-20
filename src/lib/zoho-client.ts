@@ -125,12 +125,22 @@ export function categorizeDealStage(stage: string): DealCategory {
   return 'other';
 }
 
+// --- Data caching (5 minutes) ---
+
+interface CacheEntry<T> { data: T; expiry: number; }
+let leadsCache: CacheEntry<ZohoLead[]> | null = null;
+let dealsCache: CacheEntry<ZohoDeal[]> | null = null;
+const CACHE_TTL = 5 * 60 * 1000;
+
+export function clearZohoCache() { leadsCache = null; dealsCache = null; }
+
 // --- Fetch functions ---
 
 const LEAD_FIELDS = 'Full_Name,Email,Mobile,Phone,Status,Country,City,Created_Time,Modified_Time,Owner';
 const DEAL_FIELDS = 'Deal_Name,Stage,Email,Phone,Country,Total_Order_Value,Contact_Name,Pipeline,Magnification,Lighting_Selection,Created_Time,Modified_Time,Owner';
 
 export async function fetchAllJamesLeads(): Promise<ZohoLead[]> {
+  if (leadsCache && Date.now() < leadsCache.expiry) return leadsCache.data;
   const all: ZohoLead[] = [];
   let page = 1, more = true;
   while (more && page <= 15) {
@@ -140,11 +150,13 @@ export async function fetchAllJamesLeads(): Promise<ZohoLead[]> {
     more = !!(data.info as { more_records?: boolean } | undefined)?.more_records;
     page++;
   }
-  console.log(`[Zoho] Fetched ${all.length} leads`);
+  console.log(`[Zoho] Fetched ${all.length} leads (cached 5m)`);
+  leadsCache = { data: all, expiry: Date.now() + CACHE_TTL };
   return all;
 }
 
 export async function fetchAllJamesDeals(): Promise<ZohoDeal[]> {
+  if (dealsCache && Date.now() < dealsCache.expiry) return dealsCache.data;
   const all: ZohoDeal[] = [];
   let page = 1, more = true;
   while (more && page <= 10) {
@@ -154,8 +166,33 @@ export async function fetchAllJamesDeals(): Promise<ZohoDeal[]> {
     more = !!(data.info as { more_records?: boolean } | undefined)?.more_records;
     page++;
   }
-  console.log(`[Zoho] Fetched ${all.length} deals`);
+  console.log(`[Zoho] Fetched ${all.length} deals (cached 5m)`);
+  dealsCache = { data: all, expiry: Date.now() + CACHE_TTL };
   return all;
+}
+
+// --- Month filtering helpers ---
+
+export function isInMonth(dateStr: string, year: number, month: number): boolean {
+  const d = new Date(dateStr);
+  return d.getFullYear() === year && d.getMonth() === month;
+}
+
+export function filterLeadsByStatusAndMonth(leads: ZohoLead[], status: string, year: number, month: number): ZohoLead[] {
+  return leads.filter(l => l.Status === status && isInMonth(l.Modified_Time, year, month));
+}
+
+export function filterDealsByStageAndMonth(deals: ZohoDeal[], stage: string | string[], year: number, month: number): ZohoDeal[] {
+  const stages = Array.isArray(stage) ? stage : [stage];
+  return deals.filter(d => stages.includes(d.Stage) && isInMonth(d.Modified_Time, year, month));
+}
+
+export function currentAtStage(leads: ZohoLead[], status: string): ZohoLead[] {
+  return leads.filter(l => l.Status === status);
+}
+
+export function currentDealsAtStage(deals: ZohoDeal[], stages: string[]): ZohoDeal[] {
+  return deals.filter(d => stages.includes(d.Stage));
 }
 
 export function getDealValue(deal: ZohoDeal): number {

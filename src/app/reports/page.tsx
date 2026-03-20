@@ -1,237 +1,300 @@
 'use client';
 
-import Link from 'next/link';
-import AgentCard from '@/components/AgentCard';
-import { BriefingResult, FollowUpResult, WeeklyResult } from '@/lib/types';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+
+interface ReportData {
+  configured: boolean;
+  month: string;
+  year: number;
+  monthIndex: number;
+  demoToOrderRate: number;
+  trendLabels: string[];
+  trends: Record<string, number[]>;
+  reports: Record<string, {
+    title: string;
+    count?: number;
+    thisMonthCount?: number;
+    currentCount?: number;
+    totalCount?: number;
+    crmCount?: number;
+    directCount?: number;
+    totalCountNum?: number;
+    dispatchedCount?: number;
+    revenueDispatched?: number;
+    noShowRate?: number;
+    totalPending?: number;
+    calendarTotal?: number;
+    staleCount?: number;
+    enteredThisMonth?: number;
+    arrivedCount?: number;
+    breakdown?: Record<string, number>;
+    data?: Record<string, unknown>[];
+    crmData?: Record<string, unknown>[];
+    directData?: Record<string, unknown>[];
+  }>;
+  error?: string;
+}
+
+function getMonthOptions() {
+  const opts = [];
+  const now = new Date();
+  for (let i = 0; i < 6; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    opts.push({ label: d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }), year: d.getFullYear(), month: d.getMonth() });
+  }
+  return opts;
+}
+
+const REPORT_META = [
+  { key: 'report1', icon: 'user-plus', group: 'lead', countKey: 'count' },
+  { key: 'report2', icon: 'calendar', group: 'lead', countKey: 'calendarTotal' },
+  { key: 'report3', icon: 'user-x', group: 'lead', countKey: 'thisMonthCount' },
+  { key: 'report4', icon: 'check-circle', group: 'lead', countKey: 'totalPending' },
+  { key: 'report5', icon: 'alert-circle', group: 'lead', countKey: 'totalCount' },
+  { key: 'report6', icon: 'ruler', group: 'order', countKey: 'currentCount' },
+  { key: 'report7', icon: 'search', group: 'order', countKey: 'currentCount' },
+  { key: 'report8', icon: 'settings', group: 'order', countKey: 'totalCount' },
+  { key: 'report9', icon: 'truck', group: 'order', countKey: 'dispatchedCount' },
+];
+
+const URGENCY_COLORS: Record<string, string> = {
+  red: 'text-danger', amber: 'text-warning', green: 'text-success',
+  at_risk: 'text-danger', follow_up: 'text-warning', ok: 'text-success', ordered: 'text-success',
+};
 
 export default function ReportsPage() {
+  const months = useMemo(() => getMonthOptions(), []);
+  const [selectedMonth, setSelectedMonth] = useState(0);
+  const [data, setData] = useState<ReportData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    const m = months[selectedMonth];
+    try {
+      const res = await fetch(`/api/reports?year=${m.year}&month=${m.month}`);
+      const d = await res.json();
+      if (!d.error) setData(d);
+    } catch { /* handled */ }
+    finally { setLoading(false); }
+  }, [selectedMonth, months]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  function getCount(report: ReportData['reports'][string], meta: typeof REPORT_META[number]): number {
+    return (report as Record<string, unknown>)[meta.countKey] as number || 0;
+  }
+
   return (
-    <div className="px-5 py-6 max-w-[1000px] mx-auto">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-lg font-semibold text-white">AI Agents</h1>
-          <p className="text-sm text-muted mt-1">AI-powered analysis of your sales pipeline</p>
+    <div className="px-5 py-6 max-w-[1400px] mx-auto">
+      {/* Month selector */}
+      <div className="flex items-center gap-2 mb-6 overflow-x-auto pb-1">
+        {months.map((m, i) => (
+          <button key={i} onClick={() => setSelectedMonth(i)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+              i === selectedMonth ? 'bg-white text-black' : 'text-dim hover:text-muted'}`}>
+            {m.label}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[...Array(9)].map((_, i) => <div key={i} className="skeleton h-28 rounded-2xl" />)}
         </div>
-        <Link
-          href="/prep"
-          className="px-4 py-2 rounded-xl text-xs font-medium border border-subtle text-muted hover:text-white hover:border-subtle-hover transition-all"
-        >
-          Demo Prep
-        </Link>
-      </div>
-
-      <div className="space-y-5">
-        {/* Morning Briefing */}
-        <AgentCard
-          title="Morning Briefing"
-          description="Synthesises all data into a prioritised daily briefing"
-          endpoint="/api/agents/briefing"
-        >
-          {(data, loading) => {
-            if (loading) return <div className="h-32 bg-subtle/30 rounded-xl animate-pulse" />;
-            if (!data) return <p className="text-sm text-dim">Click Run Now to generate briefing</p>;
-            const d = data as unknown as BriefingResult;
-            return (
-              <div className="space-y-5">
-                <p className="text-sm text-white/80 leading-relaxed">{d.greeting}</p>
-                {d.red?.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="w-2 h-2 rounded-full bg-danger" />
-                      <h4 className="text-xs font-semibold uppercase tracking-heading text-danger">Action Today</h4>
+      ) : !data?.configured ? (
+        <div className="text-center py-20 text-muted">Zoho CRM not connected</div>
+      ) : (
+        <>
+          {/* Lead Reports */}
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-4">Lead Reports — {data.month}</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+            {REPORT_META.filter(m => m.group === 'lead').map(meta => {
+              const report = data.reports[meta.key];
+              if (!report) return null;
+              const count = getCount(report, meta);
+              const isOpen = expanded === meta.key;
+              return (
+                <div key={meta.key} className="rounded-2xl border border-[#1A1A1A] bg-surface overflow-hidden">
+                  <button onClick={() => setExpanded(isOpen ? null : meta.key)}
+                    className="w-full p-5 text-left hover:bg-surface-hover transition-colors">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-white">{report.title}</p>
+                      <p className="text-2xl font-light text-white tabular-nums">{count}</p>
                     </div>
-                    <div className="space-y-2">
-                      {d.red.map((item, i) => (
-                        <div key={i} className="flex items-start justify-between py-3 border-b border-subtle/60 last:border-0">
-                          <p className="text-sm text-white">{item.action}</p>
-                          {item.phone && <span className="text-xs text-muted tabular-nums ml-4 whitespace-nowrap">{item.phone}</span>}
+                    {report.staleCount !== undefined && report.staleCount > 0 && (
+                      <p className="text-[11px] text-danger mt-1">{report.staleCount} over 24h without contact</p>
+                    )}
+                    {report.noShowRate !== undefined && (
+                      <p className="text-[11px] text-dim mt-1">No-show rate: {report.noShowRate}%</p>
+                    )}
+                    {meta.key === 'report2' && report.directCount !== undefined && (
+                      <p className="text-[11px] text-dim mt-1">CRM: {report.crmCount} | Direct: {report.directCount}</p>
+                    )}
+                    {meta.key === 'report4' && data.demoToOrderRate !== undefined && (
+                      <p className="text-[11px] text-dim mt-1">Demo→Order rate: {data.demoToOrderRate}%</p>
+                    )}
+                  </button>
+                  {isOpen && report.data && (
+                    <div className="border-t border-[#1A1A1A] p-4 max-h-80 overflow-y-auto">
+                      {report.data.length === 0 ? <p className="text-xs text-dim">No records</p> : (
+                        <div className="space-y-2">
+                          {(report.data as Record<string, unknown>[]).slice(0, 30).map((row, i) => (
+                            <div key={i} className="flex items-center gap-3 py-1.5 text-xs border-b border-[#1A1A1A]/50 last:border-0">
+                              <span className="text-white flex-1 truncate">{String(row.name || '')}</span>
+                              {row.country ? <span className="text-dim">{String(row.country)}</span> : null}
+                              {row.daysSince !== undefined && <span className="text-muted tabular-nums">{String(row.daysSince)}d</span>}
+                              {row.daysSinceDemo !== undefined && <span className="text-muted tabular-nums">{String(row.daysSinceDemo)}d</span>}
+                              {row.urgency ? <span className={`${URGENCY_COLORS[String(row.urgency)] || 'text-dim'}`}>{String(row.urgency)}</span> : null}
+                              {row.stale === true && <span className="text-danger">stale</span>}
+                              {row.rebooked === false && <span className="text-danger">needs rebook</span>}
+                              {row.rebooked === true && <span className="text-success">rebooked</span>}
+                              {row.recentlyCold === true && <span className="text-warning">recent</span>}
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {d.yellow?.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="w-2 h-2 rounded-full bg-warning" />
-                      <h4 className="text-xs font-semibold uppercase tracking-heading text-warning">Watch This Week</h4>
-                    </div>
-                    <div className="space-y-2">
-                      {d.yellow.map((item, i) => (
-                        <div key={i} className="py-3 border-b border-subtle/60 last:border-0">
-                          <p className="text-sm text-white/80">{item.item}</p>
+                      )}
+                      {report.crmData && (report.crmData as Record<string, unknown>[]).length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-[#1A1A1A]">
+                          <p className="text-[10px] text-dim mb-2">CRM Bookings</p>
+                          {(report.crmData as Record<string, unknown>[]).slice(0, 10).map((row, i) => (
+                            <div key={i} className="flex items-center gap-2 py-1 text-xs">
+                              <span className="text-white flex-1 truncate">{String(row.name)}</span>
+                              <span className="text-data-blue text-[10px]">CRM</span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {d.green?.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="w-2 h-2 rounded-full bg-success" />
-                      <h4 className="text-xs font-semibold uppercase tracking-heading text-success">On Track</h4>
-                    </div>
-                    <div className="space-y-2">
-                      {d.green.map((item, i) => (
-                        <div key={i} className="py-3 border-b border-subtle/60 last:border-0">
-                          <p className="text-sm text-muted">{item.item}</p>
+                      )}
+                      {report.directData && (report.directData as Record<string, unknown>[]).length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-[#1A1A1A]">
+                          <p className="text-[10px] text-dim mb-2">Direct Bookings (not in CRM)</p>
+                          {(report.directData as Record<string, unknown>[]).slice(0, 10).map((row, i) => (
+                            <div key={i} className="flex items-center gap-2 py-1 text-xs">
+                              <span className="text-white flex-1 truncate">{String(row.name)}</span>
+                              <span className="text-warning text-[10px]">Direct</span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
-                  </div>
-                )}
-              </div>
-            );
-          }}
-        </AgentCard>
-
-        {/* Follow-Up Chase List */}
-        <AgentCard
-          title="Follow-Up Chase List"
-          description="Identifies demos from the past 7 days without a subsequent event with the same attendee"
-          endpoint="/api/agents/follow-up"
-        >
-          {(data, loading) => {
-            if (loading) return <div className="h-32 bg-subtle/30 rounded-xl animate-pulse" />;
-            if (!data) return (
-              <div>
-                <div className="flex items-center gap-2 p-3 rounded-xl bg-surface-hover border border-subtle mb-4">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-dim flex-shrink-0">
-                    <rect x="2" y="5" width="10" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
-                    <path d="M4.5 5V3.5a2.5 2.5 0 015 0V5" stroke="currentColor" strokeWidth="1.2" />
-                  </svg>
-                  <p className="text-xs text-dim">Enhanced follow-up tracking available when Zoho CRM is connected</p>
+                  )}
                 </div>
-                <p className="text-sm text-dim">Click Run Now to generate chase list from calendar data</p>
-              </div>
-            );
-            const d = data as unknown as FollowUpResult;
-            return (
-              <div className="space-y-5">
-                <div className="flex items-center gap-2 p-3 rounded-xl bg-surface-hover border border-subtle">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-dim flex-shrink-0">
-                    <rect x="2" y="5" width="10" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
-                    <path d="M4.5 5V3.5a2.5 2.5 0 015 0V5" stroke="currentColor" strokeWidth="1.2" />
-                  </svg>
-                  <p className="text-xs text-dim">Enhanced follow-up tracking available when Zoho CRM is connected</p>
-                </div>
-                <p className="text-sm text-white/80 font-medium">{d.summary}</p>
-                {d.redFlags?.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="w-2 h-2 rounded-full bg-danger" />
-                      <h4 className="text-xs font-semibold uppercase tracking-heading text-dim">Urgent</h4>
-                    </div>
-                    {d.redFlags.map((item, i) => (
-                      <div key={i} className="flex items-start justify-between py-3 border-b border-subtle/60 last:border-0">
-                        <div>
-                          <p className="text-sm text-white font-medium">{item.name}</p>
-                          <p className="text-xs text-muted mt-0.5">{item.reason}</p>
-                        </div>
-                        {item.phone && <span className="text-xs text-muted tabular-nums ml-4">{item.phone}</span>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {d.yellowFlags?.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="w-2 h-2 rounded-full bg-warning" />
-                      <h4 className="text-xs font-semibold uppercase tracking-heading text-dim">Watch</h4>
-                    </div>
-                    {d.yellowFlags.map((item, i) => (
-                      <div key={i} className="flex items-start justify-between py-3 border-b border-subtle/60 last:border-0">
-                        <div>
-                          <p className="text-sm text-white font-medium">{item.name}</p>
-                          <p className="text-xs text-muted mt-0.5">{item.reason}</p>
-                        </div>
-                        {item.phone && <span className="text-xs text-muted tabular-nums ml-4">{item.phone}</span>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {d.greenItems?.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="w-2 h-2 rounded-full bg-success" />
-                      <h4 className="text-xs font-semibold uppercase tracking-heading text-dim">On Track</h4>
-                    </div>
-                    {d.greenItems.map((item, i) => (
-                      <div key={i} className="py-3 border-b border-subtle/60 last:border-0">
-                        <p className="text-sm text-muted">{item.name} — {item.status}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          }}
-        </AgentCard>
+              );
+            })}
+          </div>
 
-        {/* Weekly Analysis */}
-        <AgentCard
-          title="Weekly Analysis"
-          description="Booking trends, day/time patterns, and insights"
-          endpoint="/api/agents/weekly"
-        >
-          {(data, loading) => {
-            if (loading) return <div className="h-32 bg-subtle/30 rounded-xl animate-pulse" />;
-            if (!data) return <p className="text-sm text-dim">Click Run Now to generate analysis</p>;
-            const d = data as unknown as WeeklyResult;
-            return (
-              <div className="space-y-6">
-                {d.weeklyVolume?.length > 0 && (
-                  <div>
-                    <h4 className="text-xs font-semibold uppercase tracking-heading text-dim mb-3">Weekly Volume</h4>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      {d.weeklyVolume.map((w, i) => (
-                        <div key={i} className="text-center py-3">
-                          <p className="text-2xl font-bold text-white tabular-nums">{w.calls}</p>
-                          <p className="text-xs text-dim mt-1">{w.week}</p>
-                        </div>
-                      ))}
+          {/* Order Reports */}
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-4">Order Reports — {data.month}</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+            {REPORT_META.filter(m => m.group === 'order').map(meta => {
+              const report = data.reports[meta.key];
+              if (!report) return null;
+              const count = getCount(report, meta);
+              const isOpen = expanded === meta.key;
+              return (
+                <div key={meta.key} className="rounded-2xl border border-[#1A1A1A] bg-surface overflow-hidden">
+                  <button onClick={() => setExpanded(isOpen ? null : meta.key)}
+                    className="w-full p-5 text-left hover:bg-surface-hover transition-colors">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-white">{report.title}</p>
+                      <p className="text-2xl font-light text-white tabular-nums">{count}</p>
                     </div>
-                  </div>
-                )}
-                {d.dayBreakdown && (
-                  <div>
-                    <h4 className="text-xs font-semibold uppercase tracking-heading text-dim mb-3">By Day</h4>
-                    <div className="flex flex-wrap gap-x-5 gap-y-2">
-                      {Object.entries(d.dayBreakdown)
-                        .sort(([, a], [, b]) => (b as number) - (a as number))
-                        .map(([day, count]) => (
-                          <span key={day} className="text-sm">
-                            <span className="text-muted">{day}</span>{' '}
-                            <span className="text-white font-semibold tabular-nums">{count as number}</span>
-                          </span>
+                    {report.breakdown && (
+                      <div className="flex gap-3 mt-2 text-[11px] text-dim">
+                        {Object.entries(report.breakdown).map(([k, v]) => (
+                          <span key={k}>{k}: <span className="text-muted">{v}</span></span>
                         ))}
+                      </div>
+                    )}
+                    {report.revenueDispatched !== undefined && report.revenueDispatched > 0 && (
+                      <p className="text-[11px] text-success mt-1">£{report.revenueDispatched.toLocaleString()} dispatched</p>
+                    )}
+                    {report.enteredThisMonth !== undefined && (
+                      <p className="text-[11px] text-dim mt-1">{report.enteredThisMonth} entered this month</p>
+                    )}
+                  </button>
+                  {isOpen && report.data && (
+                    <div className="border-t border-[#1A1A1A] p-4 max-h-80 overflow-y-auto">
+                      {report.data.length === 0 ? <p className="text-xs text-dim">No records</p> : (
+                        <div className="space-y-2">
+                          {(report.data as Record<string, unknown>[]).slice(0, 30).map((row, i) => (
+                            <div key={i} className="flex items-center gap-3 py-1.5 text-xs border-b border-[#1A1A1A]/50 last:border-0">
+                              <span className="text-white flex-1 truncate">{String(row.name || '')}</span>
+                              {row.stage ? <span className="text-dim text-[10px]">{String(row.stage)}</span> : null}
+                              {row.country ? <span className="text-dim">{String(row.country)}</span> : null}
+                              {row.daysWaiting !== undefined && <span className="text-muted tabular-nums">{String(row.daysWaiting)}d</span>}
+                              {row.daysInStage !== undefined && <span className="text-muted tabular-nums">{String(row.daysInStage)}d</span>}
+                              {row.daysInCheck !== undefined && <span className="text-muted tabular-nums">{String(row.daysInCheck)}d</span>}
+                              {row.amount !== undefined && Number(row.amount) > 0 && <span className="text-muted tabular-nums">£{Math.round(Number(row.amount)).toLocaleString()}</span>}
+                              {row.urgency ? <span className={`w-2 h-2 rounded-full ${row.urgency === 'red' ? 'bg-danger' : row.urgency === 'amber' ? 'bg-warning' : 'bg-success'}`} /> : null}
+                              {row.delayed === true && <span className="text-danger text-[10px]">delayed</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 6-Month Trends */}
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-4">6-Month Trends</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
+            {[
+              { key: 'newLeads', label: 'New Leads' },
+              { key: 'demosCompleted', label: 'Demos Completed' },
+              { key: 'noShows', label: 'No Shows' },
+              { key: 'noContact', label: 'Gone Cold' },
+              { key: 'ordersCreated', label: 'Orders Created' },
+              { key: 'dispatched', label: 'Dispatched' },
+            ].map(t => {
+              const vals = data.trends[t.key] || [];
+              const current = vals[vals.length - 1] || 0;
+              const prev = vals[vals.length - 2] || 0;
+              const change = prev > 0 ? Math.round(((current - prev) / prev) * 100) : 0;
+              return (
+                <div key={t.key} className="rounded-2xl border border-[#1A1A1A] bg-surface p-4">
+                  <p className="text-[11px] text-dim mb-2">{t.label}</p>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-light text-white tabular-nums">{current}</span>
+                    {change !== 0 && (
+                      <span className={`text-[11px] ${change > 0 ? 'text-success' : 'text-danger'}`}>
+                        {change > 0 ? '+' : ''}{change}%
+                      </span>
+                    )}
                   </div>
-                )}
-                {d.timeSlots && (
-                  <div>
-                    <h4 className="text-xs font-semibold uppercase tracking-heading text-dim mb-3">By Time</h4>
-                    <div className="flex gap-6 text-sm">
-                      <span className="text-muted">Morning <span className="text-white font-semibold tabular-nums">{d.timeSlots.morning}</span></span>
-                      <span className="text-muted">Afternoon <span className="text-white font-semibold tabular-nums">{d.timeSlots.afternoon}</span></span>
-                      <span className="text-muted">Late <span className="text-white font-semibold tabular-nums">{d.timeSlots.late}</span></span>
-                    </div>
+                  <div className="flex items-end gap-0.5 h-8 mt-2">
+                    {vals.map((v, i) => {
+                      const max = Math.max(...vals, 1);
+                      return (
+                        <div key={i} className="flex-1 flex flex-col justify-end">
+                          <div
+                            className={`w-full rounded-sm transition-all ${i === vals.length - 1 ? 'bg-white' : 'bg-data-blue/50'}`}
+                            style={{ height: `${Math.max((v / max) * 100, 4)}%` }}
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
-                )}
-                <div className="flex gap-6 text-sm">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-danger" />
-                    <span className="text-muted">Cancellations <span className="text-white font-semibold tabular-nums">{d.cancellations}</span></span>
+                  <div className="flex justify-between mt-1">
+                    {data.trendLabels.map((l, i) => (
+                      <span key={i} className="text-[8px] text-dim">{l}</span>
+                    ))}
                   </div>
                 </div>
-                {d.insight && (
-                  <p className="text-sm text-muted leading-relaxed border-t border-subtle pt-4">{d.insight}</p>
-                )}
-              </div>
-            );
-          }}
-        </AgentCard>
-      </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      <footer className="border-t border-[#1A1A1A] pt-4 pb-8 flex items-center justify-between">
+        <span className="text-[11px] text-[#333]">Bryant Dental Sales Intelligence</span>
+        <span className="text-[11px] text-[#333]">Powered by Claude AI</span>
+      </footer>
     </div>
   );
 }

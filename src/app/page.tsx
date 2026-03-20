@@ -77,9 +77,9 @@ export default function Dashboard() {
       {/* KPIs — CRM (Zoho) */}
       {dashboard?.zoho?.connected && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-2">
-          <KPICard title="Pipeline Value" value={`£${(dashboard.zoho.totalValue || 0).toLocaleString()}`} loading={loading} href="/pipeline" />
+          <KPICard title="Orders This Month" value={dashboard.zoho.ordersThisMonth ?? '--'} status="success" loading={loading} href="/reports" />
           <KPICard title="Conversion Rate" value={`${dashboard.zoho.conversionRate || 0}%`} loading={loading} href="/conversions" />
-          <KPICard title="Active Leads" value={dashboard.zoho.activeLeads ?? '--'} loading={loading} href="/pipeline" />
+          <KPICard title="In Production" value={(dashboard.zoho.dealSummary?.in_progress || 0) + (dashboard.zoho.dealSummary?.awaiting || 0)} loading={loading} href="/pipeline" />
           <KPICard title="Follow-Ups" value={dashboard.zoho.followUpsNeeded ?? '--'} status="danger" loading={loading} href="/pipeline" />
         </div>
       )}

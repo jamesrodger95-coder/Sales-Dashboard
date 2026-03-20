@@ -7,10 +7,10 @@ import { useState, useEffect } from 'react';
 const navItems = [
   { href: '/', label: 'Dashboard' },
   { href: '/calls', label: 'Calls' },
+  { href: '/reports', label: 'Reports' },
   { href: '/pipeline', label: 'Pipeline' },
   { href: '/conversions', label: 'Conversions' },
   { href: '/analytics', label: 'Analytics' },
-  { href: '/reports', label: 'Agents' },
 ];
 
 export default function TopNav() {
