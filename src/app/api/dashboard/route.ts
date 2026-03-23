@@ -137,7 +137,7 @@ export async function GET() {
     // Zoho CRM data (non-blocking)
     let zoho = null;
     try {
-      const { isZohoConfigured, fetchAllJamesDeals, fetchAllJamesLeads, getDealValue, categorizeLeadStatus, categorizeDealStage, buildEmailMaps, matchEmailToCrm } = await import('@/lib/zoho-client');
+      const { isZohoConfigured, fetchAllJamesDeals, fetchAllJamesLeads, getDealValue, categorizeLeadStatus, categorizeDealStage, buildEmailMaps } = await import('@/lib/zoho-client');
       if (isZohoConfigured()) {
         const [leads, deals] = await Promise.all([fetchAllJamesLeads(), fetchAllJamesDeals()]);
         const nowMs = Date.now();
@@ -157,21 +157,20 @@ export async function GET() {
           return false;
         }).length;
 
-        // Conversion rate: 60-day calendar calls matched to deals
+        // Conversion rate: ordered / (ordered + demo_done) for current month calls
         const { leadsByEmail, dealsByEmail } = buildEmailMaps(leads, deals);
-        const sixtyDayEvents = allEvents.filter(e => {
-          const d = new Date(e.start);
-          return d >= new Date(now.getTime() - 60 * 86400000) && isSalesCall(e);
-        });
-        let ordered = 0;
-        sixtyDayEvents.forEach(e => {
+        let orderedCount = 0;
+        let demoDoneCount = 0;
+        monthlySalesCalls.forEach(e => {
           const email = getExternalAttendeeEmail(e).toLowerCase();
-          if (email) {
-            const m = matchEmailToCrm(email, leadsByEmail, dealsByEmail, 0);
-            if (m.status === 'ordered') ordered++;
-          }
+          if (!email) return;
+          if (dealsByEmail.has(email)) { orderedCount++; return; }
+          const lead = leadsByEmail.get(email);
+          if (lead?.Status === 'Purchased') { orderedCount++; return; }
+          if (lead?.Status === 'Virtual Demo Completed' || lead?.Status === 'Demo Completed') { demoDoneCount++; }
         });
-        const conversionRate = sixtyDayEvents.length > 0 ? Math.round((ordered / sixtyDayEvents.length) * 100) : 0;
+        const showedUp = orderedCount + demoDoneCount;
+        const conversionRate = showedUp > 0 ? Math.round((orderedCount / showedUp) * 100) : 0;
 
         // Follow-up counts (only recent actionable items, not 500-day-old leads)
         let redCount = 0;
@@ -202,6 +201,7 @@ export async function GET() {
           totalValue: Math.round(activePipelineValue),
           activeLeads,
           conversionRate,
+          convRateDetail: `${orderedCount} from ${showedUp} demos`,
           followUpsNeeded: redCount,
           leadSummary,
           dealSummary,
