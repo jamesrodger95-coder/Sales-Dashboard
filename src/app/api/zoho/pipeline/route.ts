@@ -1,88 +1,175 @@
 export const dynamic = 'force-dynamic';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import {
   fetchAllJamesDeals, fetchAllJamesLeads, isZohoConfigured,
-  getDealValue, categorizeLeadStatus, categorizeDealStage, getLeadPhone,
+  getDealValue, getLeadPhone, buildEmailMaps,
+  isInMonth,
+  DEAL_IN_PROGRESS, DEAL_AWAITING, DEAL_READY,
 } from '@/lib/zoho-client';
+import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail } from '@/lib/google-calendar';
 
-export async function GET() {
+function daysSince(dateStr: string): number {
+  return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
+}
+
+export async function GET(request: NextRequest) {
   if (!isZohoConfigured()) return NextResponse.json({ configured: false });
 
   try {
+    const { searchParams } = new URL(request.url);
+    const now = new Date();
+    const year = parseInt(searchParams.get('year') || String(now.getFullYear()));
+    const month = parseInt(searchParams.get('month') || String(now.getMonth()));
+    const mStart = new Date(year, month, 1);
+    const mEnd = new Date(year, month + 1, 0, 23, 59, 59);
+    const monthLabel = mStart.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+
     const [leads, deals] = await Promise.all([fetchAllJamesLeads(), fetchAllJamesDeals()]);
-    const now = Date.now();
+    const { leadsByEmail, dealsByEmail } = buildEmailMaps(leads, deals);
 
-    // Lead counts by status
-    const leadsByStatus: Record<string, number> = {};
-    leads.forEach(l => { const s = l.Status || 'No Status'; leadsByStatus[s] = (leadsByStatus[s] || 0) + 1; });
+    // Calendar data for cross-referencing
+    const calEvents = await fetchCalendarEvents(mStart.toISOString(), mEnd.toISOString());
+    const salesCalls = calEvents.filter(isSalesCall);
 
-    // Deal counts by stage with values
-    const dealsByStage: Record<string, { count: number; value: number; category: string; deals: { name: string; value: number; country: string | null; daysInStage: number }[] }> = {};
-    deals.forEach(d => {
-      const s = d.Stage;
-      const val = getDealValue(d);
-      const days = Math.floor((now - new Date(d.Modified_Time).getTime()) / 86400000);
-      if (!dealsByStage[s]) dealsByStage[s] = { count: 0, value: 0, category: categorizeDealStage(s), deals: [] };
-      dealsByStage[s].count++;
-      dealsByStage[s].value += val;
-      if (dealsByStage[s].deals.length < 20) dealsByStage[s].deals.push({ name: d.Deal_Name, value: val, country: d.Country, daysInStage: days });
-    });
+    const nowMs = Date.now();
+    const D30 = 30 * 86400000;
+    const D60 = 60 * 86400000;
 
-    // Follow-up flags
-    const redFlags: { name: string; stage: string; days: number; email: string | null; phone: string | null; action: string }[] = [];
-    const yellowFlags: { name: string; stage: string; days: number; email: string | null; phone: string | null; action: string }[] = [];
+    // === ACTIVE PIPELINE: filtered by recency ===
+    const activePipeline: Record<string, { count: number; leads: { name: string; email: string | null; phone: string | null; country: string | null; days: number }[] }> = {};
 
+    const addToStage = (stage: string, name: string, email: string | null, phone: string | null, country: string | null, days: number) => {
+      if (!activePipeline[stage]) activePipeline[stage] = { count: 0, leads: [] };
+      activePipeline[stage].count++;
+      if (activePipeline[stage].leads.length < 25) {
+        activePipeline[stage].leads.push({ name, email, phone, country, days });
+      }
+    };
+
+    // Pre-purchase leads with recency filters
     leads.forEach(l => {
-      const days = Math.floor((now - new Date(l.Modified_Time).getTime()) / 86400000);
-      const cat = categorizeLeadStatus(l.Status);
+      const created = new Date(l.Created_Time).getTime();
+      const modified = new Date(l.Modified_Time).getTime();
+      const age = nowMs - created;
+      const stageAge = nowMs - modified;
       const phone = getLeadPhone(l);
 
-      if (cat === 'pre_purchase' && (!l.Status || l.Status === 'Registered' || l.Status === 'Not Contacted' || l.Status === '-None-') && days > 1) {
-        redFlags.push({ name: l.Full_Name, stage: l.Status || 'Registered', days, email: l.Email, phone, action: 'VA needs to contact' });
-      } else if (l.Status === 'First Contact Made' && days > 10) {
-        redFlags.push({ name: l.Full_Name, stage: 'First Contact Made', days, email: l.Email, phone, action: 'Going cold — follow up or move to No Contact' });
-      } else if (l.Status === 'First Contact Made' && days > 5) {
-        yellowFlags.push({ name: l.Full_Name, stage: 'First Contact Made', days, email: l.Email, phone, action: 'Approaching deadline — follow up' });
-      } else if (cat === 'no_show') {
-        redFlags.push({ name: l.Full_Name, stage: 'No Show', days, email: l.Email, phone, action: 'Rebook demo' });
-      } else if (cat === 'demo_done' && days > 7) {
-        redFlags.push({ name: l.Full_Name, stage: l.Status || 'Demo Completed', days, email: l.Email, phone, action: 'Decision cooling — follow up' });
-      } else if (cat === 'demo_done' && days > 3) {
-        yellowFlags.push({ name: l.Full_Name, stage: l.Status || 'Demo Completed', days, email: l.Email, phone, action: 'Follow up soon' });
+      if (!l.Status || l.Status === 'Registered' || l.Status === 'Not Contacted' || l.Status === '-None-') {
+        if (age <= D30) addToStage('Registered', l.Full_Name, l.Email, phone, l.Country, daysSince(l.Created_Time));
+      } else if (l.Status === 'First Contact Made') {
+        if (stageAge <= D30) addToStage('First Contact Made', l.Full_Name, l.Email, phone, l.Country, daysSince(l.Modified_Time));
+      } else if (l.Status === 'Virtual Demo Booked') {
+        addToStage('Virtual Demo Booked', l.Full_Name, l.Email, phone, l.Country, daysSince(l.Modified_Time));
+      } else if (l.Status === 'Virtual Demo Completed' || l.Status === 'Demo Completed') {
+        if (stageAge <= D60) addToStage('Virtual Demo Completed', l.Full_Name, l.Email, phone, l.Country, daysSince(l.Modified_Time));
+      } else if (l.Status === 'No Show') {
+        if (stageAge <= D30) addToStage('No Show', l.Full_Name, l.Email, phone, l.Country, daysSince(l.Modified_Time));
+      } else if (l.Status === 'No Contact From Customer' || l.Status === 'No Contact' || l.Status === 'No Contact -') {
+        if (stageAge <= D30) addToStage('No Contact', l.Full_Name, l.Email, phone, l.Country, daysSince(l.Modified_Time));
+      }
+    });
+
+    // Post-purchase deals (active orders always shown, dispatched/arrived filtered)
+    const activeOrderStages = [...DEAL_AWAITING, ...DEAL_IN_PROGRESS, ...DEAL_READY];
+    deals.forEach(d => {
+      const days = daysSince(d.Modified_Time);
+
+      // Only show active orders (not yet shipped) in pipeline
+      if (activeOrderStages.includes(d.Stage)) {
+        addToStage(d.Stage, d.Deal_Name, d.Email, d.Phone, d.Country, days);
+      }
+      // Shipped/delivered excluded from pipeline — shown in Reports R9 instead
+      // Skip old shipped/post-delivery
+    });
+
+    // Active pipeline value (only active orders, not all-time)
+    const activeDealStages = [...DEAL_AWAITING, ...DEAL_IN_PROGRESS, ...DEAL_READY];
+    const activePipelineValue = deals
+      .filter(d => activeDealStages.includes(d.Stage))
+      .reduce((s, d) => s + getDealValue(d), 0);
+
+    // === THIS MONTH KPIs ===
+    const newLeadsThisMonth = leads.filter(l => isInMonth(l.Created_Time, year, month)).length;
+    const demosCompletedThisMonth = leads.filter(l =>
+      (l.Status === 'Virtual Demo Completed' || l.Status === 'Demo Completed') && isInMonth(l.Modified_Time, year, month)
+    ).length;
+    const noShowsThisMonth = leads.filter(l => l.Status === 'No Show' && isInMonth(l.Modified_Time, year, month)).length;
+    const ordersThisMonth = deals.filter(d => isInMonth(d.Created_Time, year, month)).length;
+
+    // === DIRECT BOOKINGS (calendar only, no Zoho record) ===
+    const directBookings = salesCalls
+      .map(e => {
+        const email = getExternalAttendeeEmail(e).toLowerCase();
+        const inZoho = email && (leadsByEmail.has(email) || dealsByEmail.has(email));
+        if (inZoho) return null;
+        return {
+          name: extractLeadName(e),
+          email: getExternalAttendeeEmail(e),
+          date: e.start,
+          isPast: new Date(e.start) < now,
+        };
+      })
+      .filter(Boolean);
+
+    // === FOLLOW-UP ACTIONS (only recent, max 14 days for red, 30 days for yellow) ===
+    const redFlags: { name: string; stage: string; days: number; action: string; email: string | null; phone: string | null }[] = [];
+    const yellowFlags: { name: string; stage: string; days: number; action: string; email: string | null; phone: string | null }[] = [];
+
+    leads.forEach(l => {
+      const days = daysSince(l.Modified_Time);
+      const phone = getLeadPhone(l);
+
+      // Only recent leads for follow-ups
+      if ((!l.Status || l.Status === 'Registered' || l.Status === 'Not Contacted' || l.Status === '-None-') && days > 1 && days <= 14) {
+        redFlags.push({ name: l.Full_Name, stage: 'Registered', days, action: 'VA needs to contact', email: l.Email, phone });
+      } else if (l.Status === 'First Contact Made' && days > 10 && days <= 30) {
+        redFlags.push({ name: l.Full_Name, stage: 'FCM', days, action: 'Going cold', email: l.Email, phone });
+      } else if (l.Status === 'First Contact Made' && days > 5 && days <= 10) {
+        yellowFlags.push({ name: l.Full_Name, stage: 'FCM', days, action: 'Approaching deadline', email: l.Email, phone });
+      } else if (l.Status === 'No Show' && days <= 7) {
+        redFlags.push({ name: l.Full_Name, stage: 'No Show', days, action: 'Rebook demo', email: l.Email, phone });
+      } else if ((l.Status === 'Virtual Demo Completed' || l.Status === 'Demo Completed') && days > 7 && days <= 30) {
+        redFlags.push({ name: l.Full_Name, stage: 'VDC', days, action: 'Decision cooling', email: l.Email, phone });
+      } else if ((l.Status === 'Virtual Demo Completed' || l.Status === 'Demo Completed') && days > 3 && days <= 7) {
+        yellowFlags.push({ name: l.Full_Name, stage: 'VDC', days, action: 'Follow up soon', email: l.Email, phone });
       }
     });
 
     deals.forEach(d => {
-      const days = Math.floor((now - new Date(d.Modified_Time).getTime()) / 86400000);
+      const days = daysSince(d.Modified_Time);
       if (d.Stage === 'Awaiting Measurements' && days > 10) {
-        redFlags.push({ name: d.Deal_Name, stage: d.Stage, days, email: d.Email, phone: d.Phone, action: 'Customer disengaging — chase measurements' });
+        redFlags.push({ name: d.Deal_Name, stage: 'Awaiting Meas.', days, action: 'Chase measurements', email: d.Email, phone: d.Phone });
       } else if (d.Stage === 'Awaiting Measurements' && days > 7) {
-        yellowFlags.push({ name: d.Deal_Name, stage: d.Stage, days, email: d.Email, phone: d.Phone, action: 'Gentle reminder for measurements' });
+        yellowFlags.push({ name: d.Deal_Name, stage: 'Awaiting Meas.', days, action: 'Gentle reminder', email: d.Email, phone: d.Phone });
       }
       if (d.Stage === 'In Manufacturing' && days > 105) {
-        redFlags.push({ name: d.Deal_Name, stage: d.Stage, days, email: d.Email, phone: d.Phone, action: 'Over 15 weeks — proactive update needed' });
-      }
-      if (d.Stage === 'No Response from Customer') {
-        redFlags.push({ name: d.Deal_Name, stage: d.Stage, days, email: d.Email, phone: d.Phone, action: 'Re-engage customer' });
+        redFlags.push({ name: d.Deal_Name, stage: 'Manufacturing', days, action: 'Over 15 weeks', email: d.Email, phone: d.Phone });
       }
       if (d.Stage === 'Measurement Issues') {
-        yellowFlags.push({ name: d.Deal_Name, stage: d.Stage, days, email: d.Email, phone: d.Phone, action: 'Resolve measurement issue' });
+        yellowFlags.push({ name: d.Deal_Name, stage: 'Meas. Issues', days, action: 'Resolve issue', email: d.Email, phone: d.Phone });
       }
     });
 
-    // Sort flags by urgency (most days first)
-    redFlags.sort((a, b) => b.days - a.days);
-    yellowFlags.sort((a, b) => b.days - a.days);
+    // Sort by days (fewest first — most recent = most actionable)
+    redFlags.sort((a, b) => a.days - b.days);
+    yellowFlags.sort((a, b) => a.days - b.days);
 
     return NextResponse.json({
       configured: true,
-      totalLeads: leads.length,
-      totalDeals: deals.length,
-      totalPipelineValue: Math.round(deals.reduce((s, d) => s + getDealValue(d), 0)),
-      leadsByStatus,
-      dealsByStage,
-      redFlags: redFlags.slice(0, 30),
-      yellowFlags: yellowFlags.slice(0, 20),
+      month: monthLabel,
+      kpis: {
+        newLeads: newLeadsThisMonth,
+        demosBooked: salesCalls.length,
+        demosCompleted: demosCompletedThisMonth,
+        noShows: noShowsThisMonth,
+        ordersThisMonth,
+        activePipelineValue: Math.round(activePipelineValue),
+      },
+      activePipeline,
+      directBookings,
+      directBookingCount: directBookings.length,
+      redFlags: redFlags.slice(0, 15),
+      yellowFlags: yellowFlags.slice(0, 10),
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Pipeline failed';

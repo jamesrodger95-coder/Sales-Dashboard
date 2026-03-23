@@ -140,12 +140,21 @@ export async function GET() {
       const { isZohoConfigured, fetchAllJamesDeals, fetchAllJamesLeads, getDealValue, categorizeLeadStatus, categorizeDealStage, buildEmailMaps, matchEmailToCrm } = await import('@/lib/zoho-client');
       if (isZohoConfigured()) {
         const [leads, deals] = await Promise.all([fetchAllJamesLeads(), fetchAllJamesDeals()]);
-        const totalValue = deals.reduce((s: number, d) => s + getDealValue(d), 0);
+        const nowMs = Date.now();
+        const D30 = 30 * 86400000;
+        const D60 = 60 * 86400000;
 
-        // Active leads = pre-purchase + demo_done stages
+        // Active pipeline value = only orders in production stages (not all-time)
+        const activeOrderStages = ['Awaiting Measurements', 'Pending Payment Authorisation', 'Customers Not Ordered', 'Measurement Issues', 'Measurements Final Checks', 'Prescription Ordered', 'In Manufacturing', 'Order Assembled', 'Address Confirmed', 'Order Ready to Send'];
+        const activePipelineValue = deals.filter(d => activeOrderStages.includes(d.Stage)).reduce((s: number, d) => s + getDealValue(d), 0);
+
+        // Active leads = recent pre-purchase + demo_done only (last 60 days, not 500-day-old leads)
         const activeLeads = leads.filter(l => {
           const cat = categorizeLeadStatus(l.Status);
-          return ['pre_purchase', 'demo_done'].includes(cat);
+          const stageAge = nowMs - new Date(l.Modified_Time).getTime();
+          if (cat === 'pre_purchase') return stageAge <= D30;
+          if (cat === 'demo_done') return stageAge <= D60;
+          return false;
         }).length;
 
         // Conversion rate: 60-day calendar calls matched to deals
@@ -164,21 +173,20 @@ export async function GET() {
         });
         const conversionRate = sixtyDayEvents.length > 0 ? Math.round((ordered / sixtyDayEvents.length) * 100) : 0;
 
-        // Follow-up counts
-        const nowMs = Date.now();
+        // Follow-up counts (only recent actionable items, not 500-day-old leads)
         let redCount = 0;
         leads.forEach(l => {
           const days = Math.floor((nowMs - new Date(l.Modified_Time).getTime()) / 86400000);
-          const cat = categorizeLeadStatus(l.Status);
-          if (cat === 'no_show') redCount++;
-          else if (cat === 'demo_done' && days > 7) redCount++;
-          else if (l.Status === 'First Contact Made' && days > 10) redCount++;
+          if (l.Status === 'No Show' && days <= 7) redCount++;
+          else if ((l.Status === 'Virtual Demo Completed' || l.Status === 'Demo Completed') && days > 7 && days <= 30) redCount++;
+          else if (l.Status === 'First Contact Made' && days > 10 && days <= 30) redCount++;
+          else if ((!l.Status || l.Status === 'Registered' || l.Status === 'Not Contacted') && days > 1 && days <= 14) redCount++;
         });
         deals.forEach(d => {
           const days = Math.floor((nowMs - new Date(d.Modified_Time).getTime()) / 86400000);
           if (d.Stage === 'Awaiting Measurements' && days > 10) redCount++;
           if (d.Stage === 'In Manufacturing' && days > 105) redCount++;
-          if (d.Stage === 'No Response from Customer') redCount++;
+          if (d.Stage === 'Measurement Issues') redCount++;
         });
 
         // Pipeline summary
@@ -191,7 +199,7 @@ export async function GET() {
           connected: true,
           totalLeads: leads.length,
           totalDeals: deals.length,
-          totalValue: Math.round(totalValue),
+          totalValue: Math.round(activePipelineValue),
           activeLeads,
           conversionRate,
           followUpsNeeded: redCount,
@@ -202,7 +210,7 @@ export async function GET() {
             return created >= monthStart && created <= monthEnd;
           }).length,
         };
-        console.log(`[Dashboard] Zoho: ${leads.length} leads, ${deals.length} deals, £${Math.round(totalValue)}, ${conversionRate}% conversion`);
+        console.log(`[Dashboard] Zoho: ${leads.length} leads, ${deals.length} deals, £${Math.round(activePipelineValue)} active, ${conversionRate}% conversion`);
       }
     } catch (zohoErr) {
       console.error('[Dashboard] Zoho error (non-fatal):', zohoErr);
