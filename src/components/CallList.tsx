@@ -76,8 +76,10 @@ export default function CallList({ calls, loading }: CallListProps) {
                   </div>
                 </div>
               </td>
-              <td className="py-3 text-muted tabular-nums text-xs font-mono">
-                {call.phone || <span className="text-dim">--</span>}
+              <td className="py-3 tabular-nums text-xs font-mono">
+                {call.phone
+                  ? <a href={`tel:${call.phone.replace(/\s/g, '')}`} className="text-muted hover:text-white transition-colors">{call.phone}</a>
+                  : <span className="text-dim">--</span>}
               </td>
               <td className="py-3 text-muted text-xs">
                 {new Date(call.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}

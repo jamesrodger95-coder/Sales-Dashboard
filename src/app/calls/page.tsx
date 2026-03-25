@@ -92,6 +92,12 @@ export default function CallsPage() {
         <div className="flex items-baseline gap-3">
           <span className="text-3xl font-bold text-white tabular-nums">{loading ? '--' : filtered.length}</span>
           <span className="text-sm text-muted">calls</span>
+          {!loading && (() => {
+            const uniqueEmails = new Set(filtered.map(c => c.contactName?.toLowerCase()).filter(Boolean));
+            return uniqueEmails.size < filtered.length ? (
+              <span className="text-xs text-dim">({uniqueEmails.size} unique leads)</span>
+            ) : null;
+          })()}
         </div>
         <div className="flex items-center gap-3">
           <input

@@ -76,7 +76,7 @@ export function extractLeadName(event: CalendarEvent): string {
 
   for (const pattern of patterns) {
     if (pattern.test(summary)) {
-      const name = summary.replace(pattern, '').trim();
+      const name = summary.replace(pattern, '').replace(/\s+/g, ' ').trim();
       if (name.length > 0 && name.length < 80) return name;
     }
   }
@@ -84,7 +84,7 @@ export function extractLeadName(event: CalendarEvent): string {
   // Fallback: try splitting on " and James"
   const andJamesIdx = summary.toLowerCase().indexOf(' and james');
   if (andJamesIdx > 0) {
-    const name = summary.substring(0, andJamesIdx).trim();
+    const name = summary.substring(0, andJamesIdx).replace(/\s+/g, ' ').trim();
     if (name.length > 0 && name.length < 80) return name;
   }
 

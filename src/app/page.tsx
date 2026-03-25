@@ -39,7 +39,9 @@ export default function Dashboard() {
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncState, setSyncState] = useState<SyncState>('syncing');
+  const [lastSynced, setLastSynced] = useState<Date | null>(null);
   const syncedTimer = useRef<NodeJS.Timeout | null>(null);
+  const autoRefreshRef = useRef<NodeJS.Timeout | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -50,6 +52,7 @@ export default function Dashboard() {
       setDashboard(data);
       if (data.analytics) setAnalytics(data.analytics);
       setSyncState('synced');
+      setLastSynced(new Date());
       if (syncedTimer.current) clearTimeout(syncedTimer.current);
       syncedTimer.current = setTimeout(() => setSyncState('idle'), 2500);
     } catch {
@@ -59,7 +62,15 @@ export default function Dashboard() {
     }
   }, []);
 
-  useEffect(() => { loadData(); return () => { if (syncedTimer.current) clearTimeout(syncedTimer.current); }; }, [loadData]);
+  useEffect(() => {
+    loadData();
+    // Auto-refresh every 5 minutes
+    autoRefreshRef.current = setInterval(() => { loadData(); }, 5 * 60 * 1000);
+    return () => {
+      if (syncedTimer.current) clearTimeout(syncedTimer.current);
+      if (autoRefreshRef.current) clearInterval(autoRefreshRef.current);
+    };
+  }, [loadData]);
 
   const kpis = dashboard?.kpis;
   const totalTime = analytics?.timeSlots ? analytics.timeSlots.morning + analytics.timeSlots.afternoon + analytics.timeSlots.late : 1;
@@ -85,7 +96,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      <SyncStatus status={syncState} onRefresh={loadData} />
+      <SyncStatus status={syncState} onRefresh={loadData} lastSynced={lastSynced} />
 
       {/* Main content: 55/45 split */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_0.82fr] gap-6 mb-6">

@@ -62,9 +62,9 @@ export default function ScheduleList({ items, title, loading }: ScheduleListProp
                 {/* Lead name */}
                 <p className="text-sm text-white mt-1">{item.name}</p>
 
-                {/* Phone */}
+                {/* Phone — clickable */}
                 {item.phone && (
-                  <p className="text-xs text-dim tabular-nums font-mono mt-0.5">{item.phone}</p>
+                  <a href={`tel:${item.phone.replace(/\s/g, '')}`} className="text-xs text-dim tabular-nums font-mono mt-0.5 hover:text-muted transition-colors block">{item.phone}</a>
                 )}
 
                 {/* Location */}
