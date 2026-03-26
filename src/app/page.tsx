@@ -7,9 +7,19 @@ import CallList from '@/components/CallList';
 import WeeklyChart from '@/components/WeeklyChart';
 import ScheduleList from '@/components/ScheduleList';
 import SyncStatus from '@/components/SyncStatus';
+import DrillDown from '@/components/DrillDown';
 import { CallRecord, ScheduleItem, AnalyticsData } from '@/lib/types';
 
 type SyncState = 'idle' | 'syncing' | 'synced' | 'error';
+
+function getWeekLabel(date: Date): string {
+  const start = new Date(date);
+  start.setDate(start.getDate() - start.getDay() + 1);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 4);
+  const fmt = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return `${fmt(start)} - ${fmt(end)}`;
+}
 
 interface ZohoSummary {
   connected: boolean;
@@ -75,6 +85,55 @@ export default function Dashboard() {
   const kpis = dashboard?.kpis;
   const totalTime = analytics?.timeSlots ? analytics.timeSlots.morning + analytics.timeSlots.afternoon + analytics.timeSlots.late : 1;
 
+  // Drill-down state
+  const [drillTitle, setDrillTitle] = useState('');
+  const [drillSub, setDrillSub] = useState('');
+  const [drillRows, setDrillRows] = useState<{ name: string; phone?: string | null; email?: string; date?: string; country?: string | null }[]>([]);
+  const [drillOpen, setDrillOpen] = useState(false);
+
+  // All 3-month calls for chart drill-down filtering
+  const allCalls = (dashboard as DashboardData & { allCalls3m?: { name: string; phone: string | null; email: string; date: string; country: string | null }[] })?.allCalls3m || dashboard?.calls || [];
+
+  const openDrill = (title: string, subtitle: string, rows: typeof drillRows) => {
+    setDrillTitle(title);
+    setDrillSub(subtitle);
+    setDrillRows(rows);
+    setDrillOpen(true);
+  };
+
+  const handleWeekClick = (weekLabel: string) => {
+    // Parse week label like "3 Mar - 7 Mar" to filter calls
+    const parts = weekLabel.split(' - ');
+    if (parts.length !== 2) return;
+    const filtered = allCalls.filter(c => {
+      const d = new Date(c.date);
+      return getWeekLabel(d) === weekLabel;
+    });
+    openDrill(`Week of ${weekLabel}`, `${filtered.length} calls`, filtered.map(c => ({
+      name: c.name, phone: c.phone, email: c.email, date: c.date, country: c.country,
+    })));
+  };
+
+  const handleDayClick = (day: string) => {
+    const filtered = allCalls.filter(c => {
+      const d = new Date(c.date);
+      return d.toLocaleDateString('en-GB', { weekday: 'long' }) === day ||
+             d.toLocaleDateString('en-GB', { weekday: 'long' }).startsWith(day.substring(0, 3));
+    });
+    openDrill(day, `${filtered.length} calls on ${day}s`, filtered.map(c => ({
+      name: c.name, phone: c.phone, email: c.email, date: c.date, country: c.country,
+    })));
+  };
+
+  const handleTimeClick = (slot: string) => {
+    const ranges: Record<string, [number, number]> = { Morning: [0, 12], Afternoon: [12, 16], Late: [16, 24] };
+    const [min, max] = ranges[slot] || [0, 24];
+    const filtered = allCalls.filter(c => { const h = new Date(c.date).getHours(); return h >= min && h < max; });
+    openDrill(`${slot} calls`, `${filtered.length} calls`, filtered.map(c => ({
+      name: c.name, phone: c.phone, email: c.email, date: c.date, country: c.country,
+    })));
+  };
+
   return (
     <div className="px-5 py-6 max-w-[1400px] mx-auto">
 
@@ -122,7 +181,7 @@ export default function Dashboard() {
               <Link href="/analytics" className="text-[11px] text-muted hover:text-white transition-colors">Full analytics</Link>
             </div>
             <div className="mt-4">
-              <WeeklyChart data={analytics?.weeklyVolume || []} loading={loading} />
+              <WeeklyChart data={analytics?.weeklyVolume || []} loading={loading} onBarClick={handleWeekClick} />
             </div>
           </div>
 
@@ -152,7 +211,7 @@ export default function Dashboard() {
                 {Object.entries(analytics.dayBreakdown)
                   .filter(([day]) => !['Saturday', 'Sunday'].includes(day) || analytics.dayBreakdown[day] > 0)
                   .map(([day, count], i) => (
-                    <div key={day} className="fade-in-row flex items-center gap-3" style={{ animationDelay: `${i * 50}ms` }}>
+                    <button key={day} onClick={() => handleDayClick(day)} className="fade-in-row flex items-center gap-3 w-full text-left hover:bg-white/[0.02] rounded-lg px-1 -mx-1 cursor-pointer transition-colors" style={{ animationDelay: `${i * 50}ms` }}>
                       <span className="text-xs text-dim w-8">{day.substring(0, 3)}</span>
                       <div className="flex-1 h-6 bg-[#0A0A0A] rounded-md overflow-hidden">
                         <div
@@ -162,7 +221,7 @@ export default function Dashboard() {
                       </div>
                       <span className="text-xs text-white font-semibold tabular-nums w-6 text-right">{count}</span>
                       <span className="text-[10px] text-dim tabular-nums w-8 text-right">{Math.round((count / totalDays) * 100)}%</span>
-                    </div>
+                    </button>
                   ))}
               </div>
             );
@@ -184,7 +243,7 @@ export default function Dashboard() {
                 const pct = totalTime > 0 ? Math.round((t.val / totalTime) * 100) : 0;
                 const maxSlot = Math.max(analytics.timeSlots.morning, analytics.timeSlots.afternoon, analytics.timeSlots.late, 1);
                 return (
-                  <div key={t.label} className="fade-in-row" style={{ animationDelay: `${i * 80}ms` }}>
+                  <button key={t.label} onClick={() => handleTimeClick(t.label)} className="fade-in-row w-full text-left hover:bg-white/[0.02] rounded-xl p-1 -m-1 cursor-pointer transition-colors" style={{ animationDelay: `${i * 80}ms` }}>
                     <div className="flex items-center justify-between mb-1.5">
                       <div>
                         <span className="text-sm text-white">{t.label}</span>
@@ -201,7 +260,7 @@ export default function Dashboard() {
                         style={{ width: `${(t.val / maxSlot) * 100}%` }}
                       />
                     </div>
-                  </div>
+                  </button>
                 );
               })}
               <p className="text-[10px] text-dim mt-2">Based on {totalTime} total calls</p>
@@ -273,6 +332,9 @@ export default function Dashboard() {
         <span className="text-[11px] text-[#333]">Bryant Dental Sales Intelligence</span>
         <span className="text-[11px] text-[#333]">Powered by Claude AI</span>
       </footer>
+
+      {/* Drill-down panel */}
+      <DrillDown open={drillOpen} onClose={() => setDrillOpen(false)} title={drillTitle} subtitle={drillSub} rows={drillRows} />
     </div>
   );
 }

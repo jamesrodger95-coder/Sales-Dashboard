@@ -6,9 +6,10 @@ import { WeeklyVolume } from '@/lib/types';
 interface WeeklyChartProps {
   data: WeeklyVolume[];
   loading?: boolean;
+  onBarClick?: (weekLabel: string) => void;
 }
 
-export default function WeeklyChart({ data, loading }: WeeklyChartProps) {
+export default function WeeklyChart({ data, loading, onBarClick }: WeeklyChartProps) {
   if (loading) {
     return (
       <div className="h-48 flex items-end gap-2 px-2 pb-4">
@@ -34,17 +35,20 @@ export default function WeeklyChart({ data, loading }: WeeklyChartProps) {
 
   return (
     <ResponsiveContainer width="100%" height={200}>
-      <BarChart data={data} margin={{ top: 8, right: 0, bottom: 0, left: -24 }}>
+      <BarChart data={data} margin={{ top: 8, right: 0, bottom: 0, left: -24 }}
+        style={{ cursor: onBarClick ? 'pointer' : undefined }}>
         <XAxis dataKey="week" axisLine={false} tickLine={false} tick={{ fill: '#555', fontSize: 10 }} />
         <YAxis axisLine={false} tickLine={false} tick={{ fill: '#555', fontSize: 11 }} />
         <Tooltip
-          cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+          cursor={{ fill: 'rgba(255,255,255,0.05)' }}
           contentStyle={{ background: '#111', border: '1px solid #222', borderRadius: '12px', color: '#fff', fontSize: '12px', padding: '8px 14px' }}
           labelStyle={{ color: '#888', marginBottom: '4px' }}
         />
-        <Bar dataKey="calls" radius={[4, 4, 0, 0]} maxBarSize={44} animationDuration={600} animationEasing="ease-out">
+        <Bar dataKey="calls" radius={[4, 4, 0, 0]} maxBarSize={44} animationDuration={600}
+          cursor={onBarClick ? 'pointer' : undefined}
+          onClick={(_barData, index) => { if (onBarClick && index !== undefined && data[index]) onBarClick(data[index].week); }}>
           {data.map((entry, i) => (
-            <Cell key={i} fill={entry.isCurrent ? '#ffffff' : '#60A5FA'} />
+            <Cell key={i} fill={entry.isCurrent ? '#ffffff' : '#60A5FA'} className="hover:opacity-80 transition-opacity" />
           ))}
         </Bar>
       </BarChart>

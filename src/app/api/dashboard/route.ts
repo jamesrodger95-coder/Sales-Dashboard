@@ -68,6 +68,7 @@ export async function GET() {
       };
     });
 
+
     const buildScheduleItem = (e: CalendarEvent) => {
       const n = extractMeetingNotes(e);
       return {
@@ -89,6 +90,12 @@ export async function GET() {
     // === ANALYTICS DATA (computed from same events, no extra API calls) ===
     const salesCalls = allEvents.filter(isSalesCall);
     const cancelled = allEvents.filter(isCancelled);
+
+    // All 3-month calls for drill-down
+    const allCalls3m = salesCalls.map(e => ({
+      name: extractLeadName(e), phone: extractPhone(e), email: getExternalAttendeeEmail(e),
+      date: e.start, country: extractCountry(e),
+    }));
 
     // Weekly volume
     const weekMap = new Map<string, { calls: number; isCurrent: boolean }>();
@@ -224,6 +231,7 @@ export async function GET() {
         upcomingDemos: upcomingDemos.length,
       },
       calls,
+      allCalls3m,
       todaySchedule,
       tomorrowSchedule,
       month: now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
