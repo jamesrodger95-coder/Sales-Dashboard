@@ -178,7 +178,7 @@ export default function ConversionsPage() {
                       <td className="py-2 text-muted font-mono">{r.phone || '--'}</td>
                       <td className="py-2 text-muted">{new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</td>
                       <td className="py-2"><span className={`inline-flex items-center gap-1 ${cfg.color}`}><span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />{cfg.label}</span></td>
-                      <td className="py-2 pr-4 text-dim hidden sm:table-cell">{r.value ? `£${Math.round(r.value).toLocaleString()}` : r.stage || '--'}</td>
+                      <td className="py-2 pr-4 text-dim hidden sm:table-cell">{r.value ? `$${Math.round(r.value).toLocaleString()}` : r.stage || '--'}</td>
                     </tr>
                   );
                 })}
@@ -229,7 +229,7 @@ export default function ConversionsPage() {
                           </span>
                         </td>
                         <td className="py-3 text-xs text-dim hidden md:table-cell">{r.stage || '--'}</td>
-                        <td className="py-3 pr-6 text-xs text-muted tabular-nums hidden sm:table-cell">{r.value ? `£${Math.round(r.value).toLocaleString()}` : '--'}</td>
+                        <td className="py-3 pr-6 text-xs text-muted tabular-nums hidden sm:table-cell">{r.value ? `$${Math.round(r.value).toLocaleString()}` : '--'}</td>
                       </tr>
                     );
                   })}

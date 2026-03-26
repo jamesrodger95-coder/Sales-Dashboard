@@ -208,7 +208,7 @@ export default function ReportsPage() {
                       </div>
                     )}
                     {report.revenueDispatched !== undefined && report.revenueDispatched > 0 && (
-                      <p className="text-[11px] text-success mt-1">£{report.revenueDispatched.toLocaleString()} dispatched</p>
+                      <p className="text-[11px] text-success mt-1">${report.revenueDispatched.toLocaleString()} dispatched</p>
                     )}
                     {report.enteredThisMonth !== undefined && (
                       <p className="text-[11px] text-dim mt-1">{report.enteredThisMonth} entered this month</p>
@@ -226,7 +226,7 @@ export default function ReportsPage() {
                               {row.daysWaiting !== undefined && <span className="text-muted tabular-nums">{String(row.daysWaiting)}d</span>}
                               {row.daysInStage !== undefined && <span className="text-muted tabular-nums">{String(row.daysInStage)}d</span>}
                               {row.daysInCheck !== undefined && <span className="text-muted tabular-nums">{String(row.daysInCheck)}d</span>}
-                              {row.amount !== undefined && Number(row.amount) > 0 && <span className="text-muted tabular-nums">£{Math.round(Number(row.amount)).toLocaleString()}</span>}
+                              {row.amount !== undefined && Number(row.amount) > 0 && <span className="text-muted tabular-nums">${Math.round(Number(row.amount)).toLocaleString()}</span>}
                               {row.urgency ? <span className={`w-2 h-2 rounded-full ${row.urgency === 'red' ? 'bg-danger' : row.urgency === 'amber' ? 'bg-warning' : 'bg-success'}`} /> : null}
                               {row.delayed === true && <span className="text-danger text-[10px]">delayed</span>}
                             </div>

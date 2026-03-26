@@ -91,7 +91,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-2">
           <KPICard title="Orders This Month" value={dashboard.zoho.ordersThisMonth ?? '--'} status="success" loading={loading} href="/reports" />
           <KPICard title="Conversion Rate" value={`${dashboard.zoho.conversionRate || 0}%`} loading={loading} href="/conversions" subtitle={dashboard.zoho.convRateDetail || 'This month'} />
-          <KPICard title="Active Pipeline" value={`£${(dashboard.zoho.totalValue || 0).toLocaleString()}`} loading={loading} href="/pipeline" subtitle="Orders in production" />
+          <KPICard title="Active Pipeline" value={`$${(dashboard.zoho.totalValue || 0).toLocaleString()}`} loading={loading} href="/pipeline" subtitle="Orders in production" />
           <KPICard title="Follow-Ups" value={dashboard.zoho.followUpsNeeded ?? '--'} status="danger" loading={loading} href="/pipeline" subtitle="Last 14 days" />
         </div>
       )}

@@ -210,7 +210,7 @@ export async function GET() {
             return created >= monthStart && created <= monthEnd;
           }).length,
         };
-        console.log(`[Dashboard] Zoho: ${leads.length} leads, ${deals.length} deals, £${Math.round(activePipelineValue)} active, ${conversionRate}% conversion`);
+        console.log(`[Dashboard] Zoho: ${leads.length} leads, ${deals.length} deals, $${Math.round(activePipelineValue)} active, ${conversionRate}% conversion`);
       }
     } catch (zohoErr) {
       console.error('[Dashboard] Zoho error (non-fatal):', zohoErr);

@@ -121,7 +121,7 @@ export default function PipelinePage() {
           { label: 'Demos Completed', val: data.kpis.demosCompleted },
           { label: 'No Shows', val: data.kpis.noShows, danger: true },
           { label: 'Orders', val: data.kpis.ordersThisMonth },
-          { label: 'Active Value', val: `£${data.kpis.activePipelineValue.toLocaleString()}`, small: true },
+          { label: 'Active Value', val: `$${data.kpis.activePipelineValue.toLocaleString()}`, small: true },
         ].map((k, i) => (
           <div key={i} className="rounded-2xl border border-[#1A1A1A] bg-surface p-4">
             <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-[#555] mb-1">{k.label}</p>
