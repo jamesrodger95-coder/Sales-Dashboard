@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   fetchAllJamesDeals, fetchAllJamesLeads, isZohoConfigured,
-  getDealValue, getLeadPhone, buildEmailMaps,
+  getDealValue, getLeadPhone, buildEmailMaps, getMfgStatus,
   isInMonth,
   DEAL_IN_PROGRESS, DEAL_AWAITING, DEAL_READY,
 } from '@/lib/zoho-client';
@@ -138,21 +138,33 @@ export async function GET(request: NextRequest) {
     deals.forEach(d => {
       const days = daysSince(d.Modified_Time);
       if (d.Stage === 'Awaiting Measurements' && days > 10) {
-        redFlags.push({ name: d.Deal_Name, stage: 'Awaiting Meas.', days, action: 'Chase measurements', email: d.Email, phone: d.Phone });
+        redFlags.push({ name: d.Deal_Name, stage: 'Awaiting Meas.', days, action: 'Remind about measurements — ' + days + ' days since payment', email: d.Email, phone: d.Phone });
       } else if (d.Stage === 'Awaiting Measurements' && days > 7) {
-        yellowFlags.push({ name: d.Deal_Name, stage: 'Awaiting Meas.', days, action: 'Gentle reminder', email: d.Email, phone: d.Phone });
+        yellowFlags.push({ name: d.Deal_Name, stage: 'Awaiting Meas.', days, action: 'Gentle reminder for measurements', email: d.Email, phone: d.Phone });
       }
-      if (d.Stage === 'In Manufacturing' && days > 105) {
-        redFlags.push({ name: d.Deal_Name, stage: 'Manufacturing', days, action: 'Over 15 weeks', email: d.Email, phone: d.Phone });
+      if (d.Stage === 'In Manufacturing') {
+        const m = getMfgStatus(d);
+        if (m.status === 'overdue') {
+          redFlags.push({ name: d.Deal_Name, stage: `${m.product} Wk ${m.weeksElapsed}/${m.targetWeeks}`, days: m.weeksElapsed * 7, action: `Overdue by ${m.weeksElapsed - m.targetWeeks} weeks — update customer`, email: d.Email, phone: d.Phone });
+        } else if (m.status === 'approaching') {
+          yellowFlags.push({ name: d.Deal_Name, stage: `${m.product} Wk ${m.weeksElapsed}/${m.targetWeeks}`, days: m.weeksElapsed * 7, action: 'Approaching deadline — prepare update', email: d.Email, phone: d.Phone });
+        }
       }
       if (d.Stage === 'Measurement Issues') {
-        yellowFlags.push({ name: d.Deal_Name, stage: 'Meas. Issues', days, action: 'Resolve issue', email: d.Email, phone: d.Phone });
+        yellowFlags.push({ name: d.Deal_Name, stage: 'Meas. Issues', days, action: 'Check measurement issue', email: d.Email, phone: d.Phone });
       }
     });
 
     // Sort by days (fewest first — most recent = most actionable)
     redFlags.sort((a, b) => a.days - b.days);
     yellowFlags.sort((a, b) => a.days - b.days);
+
+    // Manufacturing breakdown
+    const inMfg = deals.filter(d => d.Stage === 'In Manufacturing');
+    const mfgSummary = inMfg.map(d => {
+      const m = getMfgStatus(d);
+      return { name: d.Deal_Name, product: m.product, weeksElapsed: m.weeksElapsed, targetWeeks: m.targetWeeks, status: m.status, country: d.Country, value: getDealValue(d) };
+    });
 
     return NextResponse.json({
       configured: true,
@@ -168,6 +180,13 @@ export async function GET(request: NextRequest) {
       activePipeline,
       directBookings,
       directBookingCount: directBookings.length,
+      manufacturing: {
+        total: inMfg.length,
+        onTrack: mfgSummary.filter(m => m.status === 'on_track').length,
+        approaching: mfgSummary.filter(m => m.status === 'approaching').length,
+        overdue: mfgSummary.filter(m => m.status === 'overdue').length,
+        details: mfgSummary,
+      },
       redFlags: redFlags.slice(0, 15),
       yellowFlags: yellowFlags.slice(0, 10),
     });

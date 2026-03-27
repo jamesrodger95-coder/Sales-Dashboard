@@ -76,8 +76,11 @@ export interface ZohoDeal {
   Total_Order_Value: number | string | null;
   Contact_Name: { name: string; id: string } | null;
   Pipeline: string | null;
-  Magnification: string | null;
+  Refractive_Magnification: string | null;
   Lighting_Selection: string | null;
+  Loupes_Type: string | null;
+  Payment_Authorisation_Date: string | null;
+  Delivery_Window: string | null;
   Created_Time: string;
   Modified_Time: string;
   Owner: { name: string; id: string; email: string };
@@ -137,7 +140,7 @@ export function clearZohoCache() { leadsCache = null; dealsCache = null; }
 // --- Fetch functions ---
 
 const LEAD_FIELDS = 'Full_Name,Email,Mobile,Phone,Status,Country,City,Created_Time,Modified_Time,Owner';
-const DEAL_FIELDS = 'Deal_Name,Stage,Email,Phone,Country,Total_Order_Value,Contact_Name,Pipeline,Magnification,Lighting_Selection,Created_Time,Modified_Time,Owner';
+const DEAL_FIELDS = 'Deal_Name,Stage,Email,Phone,Country,Total_Order_Value,Contact_Name,Pipeline,Refractive_Magnification,Lighting_Selection,Loupes_Type,Payment_Authorisation_Date,Delivery_Window,Created_Time,Modified_Time,Owner';
 
 export async function fetchAllJamesLeads(): Promise<ZohoLead[]> {
   if (leadsCache && Date.now() < leadsCache.expiry) return leadsCache.data;
@@ -200,6 +203,43 @@ export function getDealValue(deal: ZohoDeal): number {
   if (typeof val === 'number') return val;
   if (typeof val === 'string') return parseFloat(val) || 0;
   return 0;
+}
+
+// --- Manufacturing timeline ---
+
+export function getProductType(deal: ZohoDeal): string {
+  const mag = deal.Refractive_Magnification;
+  if (!mag || mag === '-None-') return 'Unknown';
+  if (mag === 'MagniFlex') return 'MagniFlex';
+  return `${mag} Refractive`;
+}
+
+export function getTargetWeeks(deal: ZohoDeal): number {
+  const mag = deal.Refractive_Magnification;
+  if (mag === 'MagniFlex') return 20;
+  return 12; // All Refractive models
+}
+
+export function getMfgWeeksElapsed(deal: ZohoDeal): number {
+  const startDate = deal.Payment_Authorisation_Date || deal.Created_Time;
+  if (!startDate) return 0;
+  const days = Math.floor((Date.now() - new Date(startDate).getTime()) / 86400000);
+  return Math.floor(days / 7);
+}
+
+export type MfgStatus = 'on_track' | 'approaching' | 'overdue';
+
+export function getMfgStatus(deal: ZohoDeal): { status: MfgStatus; weeksElapsed: number; targetWeeks: number; product: string } {
+  const target = getTargetWeeks(deal);
+  const elapsed = getMfgWeeksElapsed(deal);
+  const product = getProductType(deal);
+  const warnAt = target - 2;
+
+  let status: MfgStatus = 'on_track';
+  if (elapsed >= target) status = 'overdue';
+  else if (elapsed >= warnAt) status = 'approaching';
+
+  return { status, weeksElapsed: elapsed, targetWeeks: target, product };
 }
 
 export function getLeadPhone(lead: ZohoLead): string | null {

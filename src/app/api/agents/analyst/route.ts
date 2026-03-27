@@ -1,15 +1,23 @@
 export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail, extractPhone, extractCountry, extractMeetingNotes } from '@/lib/google-calendar';
-import { fetchAllJamesLeads, fetchAllJamesDeals, isZohoConfigured, getDealValue, getLeadPhone, buildEmailMaps, categorizeLeadStatus, isInMonth } from '@/lib/zoho-client';
+import { fetchAllJamesLeads, fetchAllJamesDeals, isZohoConfigured, getDealValue, getLeadPhone, buildEmailMaps, categorizeLeadStatus, isInMonth, getMfgStatus, getProductType } from '@/lib/zoho-client';
 import { askClaude } from '@/lib/claude-client';
 
 // In-memory cache for daily report
 let cachedReport: { date: string; data: Record<string, unknown>; generatedAt: string } | null = null;
 
-const ANALYST_PROMPT = `You are James Rodger's AI Data Analyst at Bryant Dental — a UK dental MedTech company selling premium loupes and headlights to clinicians worldwide. James leads a 3-person sales team.
+const ANALYST_PROMPT = `You are James Rodger's AI Data Analyst at Bryant Dental — a UK dental MedTech company selling the world's lightest ergonomic loupes and headlights to clinicians worldwide. James leads a 3-person sales team (Lead Contact Person, Measurement Specialist, Production Updater).
 
-You analyse ALL sales data (Google Calendar calls, Zoho CRM leads/deals, cross-references) and produce a sharp daily intelligence briefing. Be specific with names, numbers, and actions. No fluff.
+PRODUCTS: Refractive Pro loupes (2.9x, 3.8x, 5.7x, 7.8x) — 12 week manufacturing. MagniFlex (3-in-1 magnification) — 20 week manufacturing. Ignis 4 headlight (Standard/Pro). Halo wired headlight.
+
+KEY SELLING POINTS: Only refractives save your neck (not just back). World's lightest at 31-36g titanium. AI-powered custom fit. 90-day money-back trial. Lifetime warranty. UK manufactured. Free worldwide shipping.
+
+MANUFACTURING TIMELINES: MagniFlex = 20 weeks. All Refractive models = 12 weeks. Flag overdue orders. Warn at 2 weeks before deadline.
+
+TEAM TASKS FORMAT: Tasks are WHO and WHY only. NO scripts, NO WhatsApp templates, NO email templates. The team knows how to communicate. Example: "Contact Naser Bader — registered 6 days ago, Kuwait, no response yet". NOT "Send this message: Hi Dr. Chen..."
+
+You analyse ALL sales data (Google Calendar calls, Zoho CRM leads/deals, cross-references, manufacturing pipeline) and produce a sharp daily intelligence briefing. Be specific with names, numbers, and actions. No fluff.
 
 Your report MUST be valid JSON with this structure:
 {
@@ -145,11 +153,38 @@ export async function POST() {
 
         const directBookings = crossRef.filter(r => r.status === 'direct_booking');
 
+        // Manufacturing timeline analysis
+        const inMfg = deals.filter(d => d.Stage === 'In Manufacturing');
+        const mfgDetails = inMfg.map(d => {
+          const m = getMfgStatus(d);
+          return { name: d.Deal_Name, product: m.product, weeksElapsed: m.weeksElapsed, targetWeeks: m.targetWeeks, status: m.status, country: d.Country };
+        });
+        const mfgOnTrack = mfgDetails.filter(m => m.status === 'on_track').length;
+        const mfgApproaching = mfgDetails.filter(m => m.status === 'approaching').length;
+        const mfgOverdue = mfgDetails.filter(m => m.status === 'overdue').length;
+
+        // Add manufacturing flags
+        mfgDetails.filter(m => m.status === 'overdue').forEach(m => {
+          flags.push({ severity: 'red', name: m.name, stage: `${m.product} — Week ${m.weeksElapsed} of ${m.targetWeeks}`, days: m.weeksElapsed * 7, contact: null, email: null, action: `Manufacturing overdue by ${m.weeksElapsed - m.targetWeeks} weeks — escalate with production` });
+        });
+        mfgDetails.filter(m => m.status === 'approaching').forEach(m => {
+          flags.push({ severity: 'amber', name: m.name, stage: `${m.product} — Week ${m.weeksElapsed} of ${m.targetWeeks}`, days: m.weeksElapsed * 7, contact: null, email: null, action: 'Approaching manufacturing deadline — prepare customer update' });
+        });
+
+        // Product mix
+        const productMix: Record<string, number> = {};
+        deals.filter(d => isInMonth(d.Created_Time, now.getFullYear(), now.getMonth())).forEach(d => {
+          const p = getProductType(d);
+          productMix[p] = (productMix[p] || 0) + 1;
+        });
+
         zohoData = {
           leadStages, dealStages, flags: flags.sort((a) => a.severity === 'red' ? -1 : 1),
           ordersThisMonth, convRate, directBookings: directBookings.length,
           crossRef: crossRef.slice(0, 50),
           activePipelineValue: deals.filter(d => activeStages.includes(d.Stage)).reduce((s, d) => s + getDealValue(d), 0),
+          manufacturing: { total: inMfg.length, onTrack: mfgOnTrack, approaching: mfgApproaching, overdue: mfgOverdue, details: mfgDetails.slice(0, 20) },
+          productMix,
         };
       } catch (zohoErr) {
         console.error('[Analyst] Zoho error:', zohoErr);

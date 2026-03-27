@@ -188,10 +188,14 @@ export async function GET() {
           else if (l.Status === 'First Contact Made' && days > 10 && days <= 30) redCount++;
           else if ((!l.Status || l.Status === 'Registered' || l.Status === 'Not Contacted') && days > 1 && days <= 14) redCount++;
         });
+        const { getMfgStatus: getMfg } = await import('@/lib/zoho-client');
         deals.forEach(d => {
           const days = Math.floor((nowMs - new Date(d.Modified_Time).getTime()) / 86400000);
           if (d.Stage === 'Awaiting Measurements' && days > 10) redCount++;
-          if (d.Stage === 'In Manufacturing' && days > 105) redCount++;
+          if (d.Stage === 'In Manufacturing') {
+            const m = getMfg(d);
+            if (m.status === 'overdue') redCount++;
+          }
           if (d.Stage === 'Measurement Issues') redCount++;
         });
 
