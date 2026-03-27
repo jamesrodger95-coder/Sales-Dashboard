@@ -2,18 +2,23 @@
 
 import { useState, useEffect } from 'react';
 
+interface CallItem { time?: string; name?: string; contact?: string; phone?: string; country?: string; location?: string; notes?: string | null; attendance?: string | null; crmStatus?: string }
+interface AttentionItem { severity?: string; name?: string; stage?: string; days?: number; contact?: string | null; action?: string }
+interface InsightItem { type?: string; text?: string; insight?: string }
+
 interface BriefingData {
   generated: boolean;
   cached?: boolean;
+  fallback?: boolean;
   generatedAt?: string;
   date?: string;
   summary?: string;
-  todaysCalls?: { time: string; name: string; phone: string; country: string; notes: string | null; attendance: string | null; crmStatus: string }[];
-  tomorrowsCalls?: { time: string; name: string; phone: string; country: string }[];
+  todaysCalls?: CallItem[];
+  tomorrowsCalls?: CallItem[];
   pipeline?: Record<string, string | number>;
-  attentionItems?: { severity: string; name: string; stage: string; days: number; contact: string | null; action: string }[];
-  insights?: { type: string; text: string }[];
-  teamTasks?: { leadContact?: string[]; measurementSpecialist?: string[]; productionUpdater?: string[] };
+  attentionItems?: AttentionItem[];
+  insights?: InsightItem[];
+  teamTasks?: Record<string, string[]>;
   weeklyScorecard?: Record<string, unknown> | null;
   error?: string;
   message?: string;
@@ -120,9 +125,9 @@ export default function BriefingPage() {
                   <div key={i} className="flex items-start gap-3">
                     <span className="text-sm text-white tabular-nums font-semibold min-w-[45px]">{c.time}</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white">{c.name}</p>
+                      <p className="text-sm text-white">{c.name || c.contact || 'Unknown'}</p>
                       {c.phone && <a href={`tel:${c.phone.replace(/\s/g, '')}`} className="text-xs text-dim font-mono hover:text-muted transition-colors">{c.phone}</a>}
-                      {c.country && <span className="text-xs text-dim ml-2">{c.country}</span>}
+                      {(c.country || c.location) && <span className="text-xs text-dim ml-2">{c.country || c.location}</span>}
                       {c.notes && <p className="text-xs text-muted italic mt-1">&ldquo;{c.notes}&rdquo;</p>}
                       {c.crmStatus && <span className="text-[10px] text-dim">{c.crmStatus}</span>}
                       {c.attendance === 'No' && (
@@ -156,16 +161,16 @@ export default function BriefingPage() {
               <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-3">Attention Needed ({data.attentionItems.length})</h2>
               <div className="space-y-2">
                 {data.attentionItems.map((item, i) => {
-                  const colors = SEVERITY_COLORS[item.severity] || SEVERITY_COLORS.amber;
+                  const colors = SEVERITY_COLORS[item.severity || 'amber'] || SEVERITY_COLORS.amber;
                   return (
                     <div key={i} className={`flex items-start gap-3 p-3 rounded-xl border-l-[3px] ${colors.bg} bg-[#0A0A0A]`}>
                       <span className={`w-2 h-2 rounded-full ${colors.dot} mt-1.5 flex-shrink-0`} />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm text-white font-medium">{item.name}</span>
-                          <span className="text-[10px] text-dim">{item.stage} · {item.days}d</span>
+                          <span className="text-sm text-white font-medium">{item.name || 'Unknown'}</span>
+                          {(item.stage || item.days) && <span className="text-[10px] text-dim">{[item.stage, item.days ? `${item.days}d` : ''].filter(Boolean).join(' · ')}</span>}
                         </div>
-                        <p className="text-xs text-muted mt-0.5">{item.action}</p>
+                        {item.action && <p className="text-xs text-muted mt-0.5">{item.action}</p>}
                         {item.contact && <a href={`tel:${item.contact.replace(/\s/g, '')}`} className="text-[11px] text-dim font-mono hover:text-muted transition-colors">{item.contact}</a>}
                       </div>
                     </div>
@@ -180,32 +185,33 @@ export default function BriefingPage() {
             <div className="rounded-2xl border border-[#1A1A1A] bg-surface p-5">
               <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-3">Insights</h2>
               <div className="space-y-2">
-                {data.insights.map((insight, i) => (
-                  <div key={i} className={`p-3 rounded-xl border-l-[3px] ${INSIGHT_COLORS[insight.type] || INSIGHT_COLORS.neutral} bg-[#0A0A0A]`}>
-                    <p className="text-sm text-muted leading-relaxed">{insight.text}</p>
-                  </div>
-                ))}
+                {data.insights.map((insight, i) => {
+                  const text = insight.text || insight.insight || String(insight);
+                  const type = insight.type || 'neutral';
+                  return (
+                    <div key={i} className={`p-3 rounded-xl border-l-[3px] ${INSIGHT_COLORS[type] || INSIGHT_COLORS.neutral} bg-[#0A0A0A]`}>
+                      <p className="text-sm text-muted leading-relaxed">{text}</p>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
 
-          {/* Team Tasks */}
-          {data.teamTasks && Object.values(data.teamTasks).some(v => v && v.length > 0) && (
+          {/* Team Tasks — handle flexible key names from Claude */}
+          {data.teamTasks && Object.keys(data.teamTasks).length > 0 && (
             <div className="rounded-2xl border border-[#1A1A1A] bg-surface p-5">
               <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-3">Team Tasks</h2>
               <div className="space-y-4">
-                {[
-                  { key: 'leadContact', label: 'Lead Contact Person' },
-                  { key: 'measurementSpecialist', label: 'Measurement Specialist' },
-                  { key: 'productionUpdater', label: 'Production Updater' },
-                ].map(team => {
-                  const tasks = (data.teamTasks as Record<string, string[]>)?.[team.key];
-                  if (!tasks || tasks.length === 0) return null;
+                {Object.entries(data.teamTasks).map(([key, tasks]) => {
+                  if (!tasks || !Array.isArray(tasks) || tasks.length === 0) return null;
+                  // Format the key as a label
+                  const label = key.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').replace(/^./, s => s.toUpperCase()).trim();
                   return (
-                    <div key={team.key}>
-                      <p className="text-xs text-white font-medium mb-2">{team.label}</p>
+                    <div key={key}>
+                      <p className="text-xs text-white font-medium mb-2">{label}</p>
                       <div className="space-y-1.5 ml-3">
-                        {tasks.map((task, i) => (
+                        {tasks.map((task: string, i: number) => (
                           <div key={i} className="flex items-start gap-2 text-xs">
                             <span className="text-dim mt-0.5">{i + 1}.</span>
                             <p className="text-muted">{task}</p>
@@ -227,7 +233,7 @@ export default function BriefingPage() {
                 {data.tomorrowsCalls.map((c, i) => (
                   <div key={i} className="flex items-center gap-3 py-1.5">
                     <span className="text-sm text-white tabular-nums font-semibold min-w-[45px]">{c.time}</span>
-                    <span className="text-sm text-muted">{c.name}</span>
+                    <span className="text-sm text-muted">{c.name || c.contact || 'Unknown'}</span>
                     {c.phone && <a href={`tel:${c.phone.replace(/\s/g, '')}`} className="text-xs text-dim font-mono hover:text-muted ml-auto">{c.phone}</a>}
                   </div>
                 ))}
