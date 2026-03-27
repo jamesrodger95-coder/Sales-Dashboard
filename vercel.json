@@ -4,5 +4,13 @@
       "path": "/api/cron/daily-briefing",
       "schedule": "0 11 * * *"
     }
-  ]
+  ],
+  "functions": {
+    "src/app/api/agents/analyst/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/cron/daily-briefing/route.ts": {
+      "maxDuration": 60
+    }
+  }
 }

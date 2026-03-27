@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 
 interface BriefingSummary {
@@ -9,11 +9,17 @@ interface BriefingSummary {
   summary?: string;
   attentionItems?: { severity: string; name: string; action: string }[];
   insights?: { type: string; text: string }[];
+  error?: string;
+  fallback?: boolean;
 }
+
+const PROGRESS_MSGS = ['Fetching calendar data...', 'Loading pipeline data...', 'Analysing patterns...', 'Building briefing...'];
 
 export default function BriefingCard() {
   const [data, setData] = useState<BriefingSummary | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [progressIdx, setProgressIdx] = useState(0);
+  const progressRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     fetch('/api/agents/analyst').then(r => r.json()).then(d => setData(d)).catch(() => {});
@@ -21,20 +27,55 @@ export default function BriefingCard() {
 
   const generate = async () => {
     setGenerating(true);
+    setProgressIdx(0);
+    // Progress messages on timers
+    progressRef.current = setInterval(() => {
+      setProgressIdx(prev => Math.min(prev + 1, PROGRESS_MSGS.length - 1));
+    }, 4000);
+
     try {
       const res = await fetch('/api/agents/analyst', { method: 'POST' });
       const d = await res.json();
       setData(d);
-    } catch { /* handled */ }
-    finally { setGenerating(false); }
+    } catch {
+      setData({ generated: false, error: 'Generation failed — try again' });
+    } finally {
+      setGenerating(false);
+      if (progressRef.current) clearInterval(progressRef.current);
+    }
   };
 
   const generatedTime = data?.generatedAt
     ? new Date(data.generatedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
     : null;
 
+  // Error state
+  if (data?.error && !generating) {
+    return (
+      <div className="rounded-2xl border border-danger/20 bg-surface p-4 mb-6 flex items-center justify-between">
+        <p className="text-xs text-danger">{data.error}</p>
+        <button onClick={generate} className="px-3 py-1.5 rounded-xl text-xs font-medium bg-white text-black hover:bg-white/90 transition-all">Retry</button>
+      </div>
+    );
+  }
+
+  // Generating state with progress
+  if (generating) {
+    return (
+      <div className="rounded-2xl border border-[#1A1A1A] bg-surface p-5 mb-6">
+        <div className="flex items-center gap-3">
+          <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin flex-shrink-0" />
+          <div>
+            <p className="text-sm text-muted">{PROGRESS_MSGS[progressIdx]}</p>
+            <p className="text-[11px] text-dim mt-0.5">This takes 15-30 seconds</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // No report yet
-  if (!data?.generated && !generating) {
+  if (!data?.generated) {
     return (
       <div className="rounded-2xl border border-dashed border-[#222] bg-surface p-4 mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -43,25 +84,10 @@ export default function BriefingCard() {
           </svg>
           <div>
             <p className="text-sm text-muted">AI Daily Briefing</p>
-            <p className="text-[11px] text-dim">Auto-generates at 11:00 AM or click to run now</p>
+            <p className="text-[11px] text-dim">Click to generate your daily intelligence report</p>
           </div>
         </div>
-        <button onClick={generate} disabled={generating}
-          className="px-3 py-1.5 rounded-xl text-xs font-medium bg-white text-black hover:bg-white/90 disabled:opacity-40 transition-all">
-          Generate
-        </button>
-      </div>
-    );
-  }
-
-  // Generating
-  if (generating) {
-    return (
-      <div className="rounded-2xl border border-[#1A1A1A] bg-surface p-5 mb-6">
-        <div className="flex items-center gap-3">
-          <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-          <p className="text-sm text-muted">Analysing data...</p>
-        </div>
+        <button onClick={generate} className="px-3 py-1.5 rounded-xl text-xs font-medium bg-white text-black hover:bg-white/90 transition-all">Generate</button>
       </div>
     );
   }
@@ -73,6 +99,7 @@ export default function BriefingCard() {
         <div className="flex items-center gap-2">
           <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">AI Briefing</h2>
           {generatedTime && <span className="text-[10px] text-dim">{generatedTime}</span>}
+          {data.fallback && <span className="text-[10px] text-warning">raw data</span>}
         </div>
         <div className="flex items-center gap-2">
           <button onClick={generate} className="text-[11px] text-dim hover:text-muted transition-colors">Refresh</button>
@@ -80,29 +107,26 @@ export default function BriefingCard() {
         </div>
       </div>
 
-      {/* Summary */}
-      {data?.summary && <p className="text-sm text-muted leading-relaxed mb-3">{data.summary}</p>}
+      {data.summary && <p className="text-sm text-muted leading-relaxed mb-3">{data.summary}</p>}
 
-      {/* Top 3 attention items */}
-      {data?.attentionItems && data.attentionItems.length > 0 && (
+      {data.attentionItems && data.attentionItems.length > 0 && (
         <div className="space-y-1.5 mb-3">
           {data.attentionItems.slice(0, 3).map((item, i) => (
             <div key={i} className="flex items-center gap-2 text-xs">
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${item.severity === 'red' ? 'bg-danger' : 'bg-warning'}`} />
               <span className="text-white">{item.name}</span>
-              <span className="text-dim">— {item.action}</span>
+              <span className="text-dim truncate">— {item.action}</span>
             </div>
           ))}
           {data.attentionItems.length > 3 && (
             <Link href="/briefing" className="text-[11px] text-dim hover:text-muted transition-colors">
-              +{data.attentionItems.length - 3} more items
+              +{data.attentionItems.length - 3} more
             </Link>
           )}
         </div>
       )}
 
-      {/* Top insight */}
-      {data?.insights && data.insights.length > 0 && (
+      {data.insights && data.insights.length > 0 && (
         <p className="text-xs text-dim italic border-t border-[#1A1A1A] pt-2">{data.insights[0].text}</p>
       )}
     </div>
