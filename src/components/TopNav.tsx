@@ -11,6 +11,7 @@ const navItems = [
   { href: '/pipeline', label: 'Pipeline' },
   { href: '/conversions', label: 'Conversions' },
   { href: '/analytics', label: 'Analytics' },
+  { href: '/briefing', label: 'Briefing' },
 ];
 
 export default function TopNav() {

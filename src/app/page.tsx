@@ -7,6 +7,7 @@ import CallList from '@/components/CallList';
 import WeeklyChart from '@/components/WeeklyChart';
 import ScheduleList from '@/components/ScheduleList';
 import SyncStatus from '@/components/SyncStatus';
+import BriefingCard from '@/components/BriefingCard';
 import DrillDown from '@/components/DrillDown';
 import { CallRecord, ScheduleItem, AnalyticsData } from '@/lib/types';
 
@@ -156,6 +157,9 @@ export default function Dashboard() {
       )}
 
       <SyncStatus status={syncState} onRefresh={loadData} lastSynced={lastSynced} />
+
+      {/* AI Briefing card */}
+      <BriefingCard />
 
       {/* Main content: 55/45 split */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_0.82fr] gap-6 mb-6">
