@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 import { NextResponse } from 'next/server';
-import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail, extractPhone, extractCountry, extractMeetingNotes } from '@/lib/google-calendar';
+import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail, extractPhone, extractCountry, extractMeetingNotes, detectBookingPlatform, hasPrepNotes } from '@/lib/google-calendar';
 import { fetchAllJamesLeads, fetchAllJamesDeals, isZohoConfigured, getLeadPhone, buildEmailMaps, isInMonth, getMfgStatus } from '@/lib/zoho-client';
 
 // In-memory cache
@@ -137,6 +137,21 @@ export async function POST() {
       }
     }
 
+    // Source breakdown for this month's calls
+    let sourceSummary = '';
+    {
+      const platforms: Record<string, number> = { Calendly: 0, 'Cal.com': 0, Other: 0 };
+      let withNotes = 0, attendanceYes = 0, attendanceNo = 0;
+      monthCalls.forEach(e => {
+        platforms[detectBookingPlatform(e)]++;
+        if (hasPrepNotes(e)) withNotes++;
+        const n = extractMeetingNotes(e);
+        if (n.attendanceConfirmed === true) attendanceYes++;
+        if (n.attendanceConfirmed === false) attendanceNo++;
+      });
+      sourceSummary = `Booking platforms: Calendly ${platforms.Calendly}, Cal.com ${platforms['Cal.com']}, Other ${platforms.Other}. With prep notes: ${withNotes}/${monthCalls.length}. Attendance commitment: ${attendanceYes} Yes, ${attendanceNo} No.`;
+    }
+
     // Build a COMPACT prompt for Claude (not raw JSON dumps)
     const briefingPrompt = `Generate a daily sales briefing for James Rodger at Bryant Dental.
 
@@ -148,15 +163,18 @@ ${todayCalls.length === 0 ? 'No calls scheduled today.' : formatCalls(todayCalls
 TOMORROW'S CALLS:
 ${tomorrowCalls.length === 0 ? 'No calls tomorrow.' : formatCalls(tomorrowCalls).map(c => `- ${c.time} ${c.name} | ${c.phone || 'no phone'} | ${c.country || '?'}`).join('\n')}
 
-THIS MONTH: ${monthCalls.length} calls (last month: estimate based on typical volume)
+THIS MONTH: ${monthCalls.length} calls
 
 PIPELINE:
 ${pipelineSummary}
 
+LEAD SOURCES:
+${sourceSummary}
+
 FOLLOW-UP ITEMS (${followUpItems.length}):
 ${followUpItems.map(f => `[${f.severity.toUpperCase()}] ${f.name} — ${f.stage} — ${f.days}d — ${f.action}`).join('\n')}
 
-Return a JSON report with: summary, todaysCalls, tomorrowsCalls, pipeline (object with key stats), attentionItems (array), insights (array with type: positive/concern/neutral), teamTasks (object with leadContact/measurementSpecialist/productionUpdater arrays of task strings — WHO and WHY only, no scripts).`;
+Return a JSON report with: summary, todaysCalls, tomorrowsCalls, pipeline (object with key stats), attentionItems (array), insights (array with type: positive/concern/neutral — include at least one source insight about booking platforms, prep notes, or attendance commitment), teamTasks (object with leadContact/measurementSpecialist/productionUpdater arrays of task strings — WHO and WHY only, no scripts).`;
 
     console.log('[Analyst] Calling Claude API...');
     console.log('[Analyst] Prompt length:', briefingPrompt.length, 'chars');

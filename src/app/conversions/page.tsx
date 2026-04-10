@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 
-interface Record { name: string; email: string; phone: string | null; date: string; country: string | null; status: string; stage: string | null; value: number | null; dealName: string | null }
+interface Record { name: string; email: string; phone: string | null; date: string; country: string | null; status: string; stage: string | null; value: number | null; dealName: string | null; platform?: string; leadSource?: string | null }
 
 interface Data {
   zohoConnected: boolean; month: string; totalCalls: number;
@@ -41,6 +41,7 @@ export default function ConversionsPage() {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [filter, setFilter] = useState('all');
+  const [platformFilter, setPlatformFilter] = useState('all');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -56,7 +57,8 @@ export default function ConversionsPage() {
   useEffect(() => { load(); }, [load]);
 
   const byStatus = (s: string) => d?.records?.filter(r => r.status === s) || [];
-  const shown = filter === 'all' ? (d?.records || []) : byStatus(filter);
+  const filteredByStatus = filter === 'all' ? (d?.records || []) : byStatus(filter);
+  const shown = platformFilter === 'all' ? filteredByStatus : filteredByStatus.filter(r => r.platform === platformFilter);
 
   return (
     <div className="px-5 py-6 max-w-[1400px] mx-auto">
@@ -191,13 +193,23 @@ export default function ConversionsPage() {
       {/* Filter tabs + main table */}
       {!expanded && (
         <>
-          <div className="flex gap-1 mb-4 overflow-x-auto pb-1">
-            {['all', 'ordered', 'demo_done', 'no_show', 'gone_cold', 'in_pipeline', 'direct_booking'].map(f => (
-              <button key={f} onClick={() => setFilter(f)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${filter === f ? 'bg-white text-black' : 'text-dim hover:text-muted'}`}>
-                {f === 'all' ? 'All' : S[f]?.label || f}
-              </button>
-            ))}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-4">
+            <div className="flex gap-1 overflow-x-auto pb-1">
+              {['all', 'ordered', 'demo_done', 'no_show', 'gone_cold', 'in_pipeline', 'direct_booking'].map(f => (
+                <button key={f} onClick={() => setFilter(f)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${filter === f ? 'bg-white text-black' : 'text-dim hover:text-muted'}`}>
+                  {f === 'all' ? 'All' : S[f]?.label || f}
+                </button>
+              ))}
+            </div>
+            <div className="sm:ml-auto flex gap-1 overflow-x-auto pb-1">
+              {['all', 'Calendly', 'Cal.com', 'Other'].map(p => (
+                <button key={p} onClick={() => setPlatformFilter(p)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${platformFilter === p ? 'bg-white text-black' : 'text-dim hover:text-muted border border-[#1A1A1A]'}`}>
+                  {p === 'all' ? 'All sources' : p}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="rounded-2xl border border-[#1A1A1A] bg-surface mb-6">
@@ -211,24 +223,33 @@ export default function ConversionsPage() {
                   <th className="py-3 pl-6 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">#</th>
                   <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">Name</th>
                   <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">Date</th>
+                  <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">Platform</th>
+                  <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] hidden lg:table-cell">Source</th>
                   <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">CRM Status</th>
-                  <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] hidden md:table-cell">Stage</th>
                   <th className="py-3 pr-6 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] hidden sm:table-cell">Value</th>
                 </tr></thead>
                 <tbody>
                   {shown.map((r, i) => {
                     const cfg = S[r.status] || S.pending;
+                    const platformClass = r.platform === 'Calendly' ? 'bg-[#F5A623]/10 text-[#F5A623]' : r.platform === 'Cal.com' ? 'bg-data-blue/10 text-data-blue' : 'bg-dim/10 text-dim';
                     return (
                       <tr key={i} className="fade-in-row border-b border-[#1A1A1A]/50 last:border-0 hover:bg-white/[0.02]" style={{ animationDelay: `${i * 20}ms` }}>
                         <td className="py-3 pl-6 text-dim tabular-nums">{i + 1}</td>
                         <td className="py-3"><p className="text-white font-medium">{r.name}</p><p className="text-[11px] text-dim">{r.email}</p></td>
                         <td className="py-3 text-xs text-muted">{new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</td>
                         <td className="py-3">
+                          {r.platform && r.platform !== 'Other' ? (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${platformClass}`}>
+                              {r.platform === 'Cal.com' ? 'Cal' : 'Calendly'}
+                            </span>
+                          ) : <span className="text-dim text-[10px]">--</span>}
+                        </td>
+                        <td className="py-3 text-xs text-dim hidden lg:table-cell">{r.leadSource || '--'}</td>
+                        <td className="py-3">
                           <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-white/[0.03] ${cfg.color}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />{cfg.label}
                           </span>
                         </td>
-                        <td className="py-3 text-xs text-dim hidden md:table-cell">{r.stage || '--'}</td>
                         <td className="py-3 pr-6 text-xs text-muted tabular-nums hidden sm:table-cell">{r.value ? `$${Math.round(r.value).toLocaleString()}` : '--'}</td>
                       </tr>
                     );

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import {
   CalendarEvent, fetchCalendarEvents, isSalesCall, isCancelled,
-  extractLeadName, getExternalAttendeeEmail, extractPhone, extractCountry, extractCity, extractMeetingNotes,
+  extractLeadName, getExternalAttendeeEmail, extractPhone, extractCountry, extractCity, extractMeetingNotes, detectBookingPlatform,
 } from '@/lib/google-calendar';
 
 export const dynamic = 'force-dynamic';
@@ -65,6 +65,7 @@ export async function GET() {
         date: e.start,
         country: [country, city].filter(Boolean).join(', ') || null,
         eventTitle: e.summary,
+        platform: detectBookingPlatform(e),
       };
     });
 

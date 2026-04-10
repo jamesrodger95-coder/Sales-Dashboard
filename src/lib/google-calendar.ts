@@ -180,6 +180,37 @@ export function extractCity(event: CalendarEvent): string | null {
   return null;
 }
 
+// --- Booking platform detection ---
+
+export type BookingPlatform = 'Calendly' | 'Cal.com' | 'Other';
+
+export function detectBookingPlatform(event: CalendarEvent): BookingPlatform {
+  const desc = (event.description || '').toLowerCase();
+  const loc = (event.location || '').toLowerCase();
+  const combined = desc + ' ' + loc;
+
+  if (combined.includes('calendly.com/cancellations') || combined.includes('calendly.com/reschedulings') || combined.includes('calendly.com')) {
+    return 'Calendly';
+  }
+  if (combined.includes('cal.com/booking') || combined.includes('cal.com/')) {
+    return 'Cal.com';
+  }
+  return 'Other';
+}
+
+export function hasPrepNotes(event: CalendarEvent): boolean {
+  const desc = event.description || '';
+  const patterns = [
+    /Please share anything that will help prepare for our meeting\.?\s*:?\s*([^\n]+)/i,
+    /Additional notes?\s*:?\s*([^\n]+)/i,
+  ];
+  for (const p of patterns) {
+    const match = desc.match(p);
+    if (match && match[1].trim().length > 3) return true;
+  }
+  return false;
+}
+
 // --- Meeting notes extraction from Calendly/Cal.com descriptions ---
 
 export interface MeetingNotes {

@@ -59,6 +59,7 @@ export interface ZohoLead {
   Mobile: string | null;
   Phone: string | null;
   Status: string | null;        // "Status" field, NOT "Lead_Status"
+  Lead_Source: string | null;   // Marketing source: Website, Google Ads, etc.
   Country: string | null;
   City: string | null;
   Created_Time: string;
@@ -139,7 +140,7 @@ export function clearZohoCache() { leadsCache = null; dealsCache = null; }
 
 // --- Fetch functions ---
 
-const LEAD_FIELDS = 'Full_Name,Email,Mobile,Phone,Status,Country,City,Created_Time,Modified_Time,Owner';
+const LEAD_FIELDS = 'Full_Name,Email,Mobile,Phone,Status,Lead_Source,Country,City,Created_Time,Modified_Time,Owner';
 const DEAL_FIELDS = 'Deal_Name,Stage,Email,Phone,Country,Total_Order_Value,Contact_Name,Pipeline,Refractive_Magnification,Lighting_Selection,Loupes_Type,Payment_Authorisation_Date,Delivery_Window,Created_Time,Modified_Time,Owner';
 
 export async function fetchAllJamesLeads(): Promise<ZohoLead[]> {

@@ -7,6 +7,7 @@ export interface CallRecord {
   eventTitle: string;
   description?: string;
   attendeeStatus?: string;
+  platform?: string;
 }
 
 export interface ScheduleItem {

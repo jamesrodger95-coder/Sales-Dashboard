@@ -71,7 +71,11 @@ export default function CallList({ calls, loading }: CallListProps) {
                     {getInitial(call.name)}
                   </span>
                   <div className="min-w-0">
-                    <p className="text-white font-medium truncate">{call.name}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-white font-medium truncate">{call.name}</p>
+                      {call.platform === 'Calendly' && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[#F5A623]/10 text-[#F5A623] flex-shrink-0">Calendly</span>}
+                      {call.platform === 'Cal.com' && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-data-blue/10 text-data-blue flex-shrink-0">Cal</span>}
+                    </div>
                     {call.email && <p className="text-[11px] text-dim truncate">{call.email}</p>}
                   </div>
                 </div>

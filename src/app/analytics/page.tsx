@@ -11,8 +11,19 @@ const TT = {
   labelStyle: { color: '#888', marginBottom: '4px' },
 };
 
+interface SourceData {
+  zohoConnected: boolean;
+  month: string;
+  totalCalls: number;
+  platformBreakdown: Record<string, { total: number; showed: number; noShow: number; ordered: number; showRate: number; noShowRate: number; conversionRate: number }>;
+  sourceBreakdown: { source: string; leads: number; ordered: number; conversionRate: number; totalValue: number; avgValue: number }[];
+  commitmentStats: { yes: number; no: number; unknown: number; yesNoShows: number; noNoShows: number; yesOrdered: number; noOrdered: number };
+  notesStats: { withNotes: number; withoutNotes: number; notesOrdered: number; noNotesOrdered: number };
+}
+
 export default function AnalyticsPage() {
   const [data, setData] = useState<AnalyticsData | null>(null);
+  const [sources, setSources] = useState<SourceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState('3m');
 
@@ -20,7 +31,6 @@ export default function AnalyticsPage() {
     setLoading(true);
     try {
       if (r === '3m') {
-        // Use dashboard endpoint which includes analytics (avoids token issues)
         const res = await fetch('/api/dashboard');
         const d = await res.json();
         if (!d.error && d.analytics) setData(d.analytics);
@@ -29,7 +39,12 @@ export default function AnalyticsPage() {
         const d = await res.json();
         if (!d.error) setData(d);
       }
-    } catch { /* handled by empty data */ }
+      // Load source data for current month
+      const now = new Date();
+      const srcRes = await fetch(`/api/sources?year=${now.getFullYear()}&month=${now.getMonth()}`);
+      const srcData = await srcRes.json();
+      if (!srcData.error) setSources(srcData);
+    } catch { /* handled */ }
     finally { setLoading(false); }
   }, []);
 
@@ -189,6 +204,107 @@ export default function AnalyticsPage() {
           ) : <p className="text-dim text-sm py-8 text-center">No data</p>}
         </div>
       </div>
+
+      {/* Lead Sources Section */}
+      {sources && (
+        <>
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-4 mt-8">Lead Sources — {sources.month}</h2>
+
+          {/* Booking Platform Comparison */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <div className="rounded-2xl border border-[#1A1A1A] bg-surface p-6">
+              <h3 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] mb-4">Booking Platform</h3>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-[#1A1A1A]">
+                    <th className="py-2 text-left text-[10px] text-[#555]">Metric</th>
+                    <th className="py-2 text-right text-[10px] text-[#F5A623]">Calendly</th>
+                    <th className="py-2 text-right text-[10px] text-data-blue">Cal.com</th>
+                    <th className="py-2 text-right text-[10px] text-dim">Other</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { label: 'Bookings', key: 'total' },
+                    { label: 'Show rate', key: 'showRate', suffix: '%' },
+                    { label: 'No-show rate', key: 'noShowRate', suffix: '%' },
+                    { label: 'Conv. rate', key: 'conversionRate', suffix: '%' },
+                  ].map(row => (
+                    <tr key={row.key} className="border-b border-[#1A1A1A]/40 last:border-0">
+                      <td className="py-2 text-muted">{row.label}</td>
+                      <td className="py-2 text-right text-white tabular-nums">{(sources.platformBreakdown.Calendly as Record<string, number>)?.[row.key] || 0}{row.suffix || ''}</td>
+                      <td className="py-2 text-right text-white tabular-nums">{(sources.platformBreakdown['Cal.com'] as Record<string, number>)?.[row.key] || 0}{row.suffix || ''}</td>
+                      <td className="py-2 text-right text-dim tabular-nums">{(sources.platformBreakdown.Other as Record<string, number>)?.[row.key] || 0}{row.suffix || ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Attendance Commitment */}
+            <div className="rounded-2xl border border-[#1A1A1A] bg-surface p-6">
+              <h3 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] mb-4">Attendance & Notes</h3>
+              <div className="space-y-3 text-xs">
+                <div className="flex justify-between items-center py-1.5 border-b border-[#1A1A1A]/40">
+                  <span className="text-muted">Said &quot;Yes&quot; to commitment</span>
+                  <span className="text-white tabular-nums">{sources.commitmentStats.yes}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-[#1A1A1A]/40">
+                  <span className="text-muted">Said &quot;No&quot; to commitment</span>
+                  <span className="text-warning tabular-nums">{sources.commitmentStats.no}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-[#1A1A1A]/40">
+                  <span className="text-muted">No-show rate (Yes responses)</span>
+                  <span className="text-white tabular-nums">{sources.commitmentStats.yes > 0 ? Math.round((sources.commitmentStats.yesNoShows / sources.commitmentStats.yes) * 100) : 0}%</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-[#1A1A1A]/40">
+                  <span className="text-muted">No-show rate (No responses)</span>
+                  <span className="text-danger tabular-nums">{sources.commitmentStats.no > 0 ? Math.round((sources.commitmentStats.noNoShows / sources.commitmentStats.no) * 100) : 0}%</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-[#1A1A1A]/40">
+                  <span className="text-muted">With prep notes</span>
+                  <span className="text-white tabular-nums">{sources.notesStats.withNotes}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5">
+                  <span className="text-muted">Without prep notes</span>
+                  <span className="text-dim tabular-nums">{sources.notesStats.withoutNotes}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Lead Source Breakdown */}
+          {sources.sourceBreakdown && sources.sourceBreakdown.length > 0 && (
+            <div className="rounded-2xl border border-[#1A1A1A] bg-surface p-6 mb-6">
+              <h3 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] mb-4">Lead Source Performance (All Time)</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-[#1A1A1A]">
+                      <th className="py-2 text-left text-[10px] text-[#555]">Source</th>
+                      <th className="py-2 text-right text-[10px] text-[#555]">Leads</th>
+                      <th className="py-2 text-right text-[10px] text-[#555]">Orders</th>
+                      <th className="py-2 text-right text-[10px] text-[#555]">Conv. rate</th>
+                      <th className="py-2 text-right text-[10px] text-[#555]">Avg value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sources.sourceBreakdown.map((s, i) => (
+                      <tr key={i} className="border-b border-[#1A1A1A]/40 last:border-0 hover:bg-white/[0.02]">
+                        <td className="py-2 text-white">{s.source}</td>
+                        <td className="py-2 text-right text-muted tabular-nums">{s.leads}</td>
+                        <td className="py-2 text-right text-success tabular-nums">{s.ordered}</td>
+                        <td className="py-2 text-right text-white font-semibold tabular-nums">{s.conversionRate}%</td>
+                        <td className="py-2 text-right text-dim tabular-nums">{s.avgValue > 0 ? `$${s.avgValue.toLocaleString()}` : '--'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       <footer className="border-t border-[#1A1A1A] pt-4 pb-8 flex items-center justify-between">
         <span className="text-[11px] text-[#333]">Bryant Dental Sales Intelligence</span>

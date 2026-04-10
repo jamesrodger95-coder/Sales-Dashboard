@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail, extractPhone, extractCountry } from '@/lib/google-calendar';
+import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail, extractPhone, extractCountry, detectBookingPlatform } from '@/lib/google-calendar';
 import { fetchAllJamesDeals, fetchAllJamesLeads, isZohoConfigured, getDealValue, ZohoLead, ZohoDeal } from '@/lib/zoho-client';
 
 type Status = 'ordered' | 'demo_done' | 'no_show' | 'gone_cold' | 'in_pipeline' | 'direct_booking' | 'pending';
@@ -43,6 +43,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ zohoConnected: false, month: monthLabel, totalCalls: calls.length, records: calls.map(e => ({
         name: extractLeadName(e), email: getExternalAttendeeEmail(e), phone: extractPhone(e),
         date: e.start, country: extractCountry(e), status: 'pending' as Status, stage: null, value: null, dealName: null,
+        platform: detectBookingPlatform(e), leadSource: null,
       })) });
     }
 
@@ -59,10 +60,13 @@ export async function GET(request: NextRequest) {
       const email = getExternalAttendeeEmail(e);
       const m = classify(email, leadMap, dealMap);
       c[m.status]++;
+      const lead = email ? leadMap.get(email.toLowerCase()) : undefined;
       return {
         name: extractLeadName(e), email, phone: extractPhone(e),
         date: e.start, country: extractCountry(e),
         status: m.status, stage: m.stage, value: m.value, dealName: m.dealName,
+        platform: detectBookingPlatform(e),
+        leadSource: lead?.Lead_Source || null,
       };
     });
 
