@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail, extractPhone, extractCountry, detectBookingPlatform } from '@/lib/google-calendar';
-import { fetchAllJamesDeals, fetchAllJamesLeads, isZohoConfigured, getDealValue, ZohoLead, ZohoDeal } from '@/lib/zoho-client';
+import { fetchAllJamesDeals, fetchAllJamesLeads, isZohoConfigured, getDealValue, getLeadPhone, ZohoLead, ZohoDeal } from '@/lib/zoho-client';
 
 type Status = 'ordered' | 'demo_done' | 'no_show' | 'gone_cold' | 'in_pipeline' | 'direct_booking' | 'pending';
 
@@ -61,8 +61,10 @@ export async function GET(request: NextRequest) {
       const m = classify(email, leadMap, dealMap);
       c[m.status]++;
       const lead = email ? leadMap.get(email.toLowerCase()) : undefined;
+      // Phone fallback chain: calendar → Zoho Mobile → Zoho Phone
+      const phone = extractPhone(e) || (lead ? getLeadPhone(lead) : null);
       return {
-        name: extractLeadName(e), email, phone: extractPhone(e),
+        name: extractLeadName(e), email, phone,
         date: e.start, country: extractCountry(e),
         status: m.status, stage: m.stage, value: m.value, dealName: m.dealName,
         platform: detectBookingPlatform(e),

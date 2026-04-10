@@ -151,7 +151,7 @@ export default function CallsPage() {
                   >
                     <td className="py-3 pl-6 pr-2 text-dim tabular-nums">{i + 1}</td>
                     <td className="py-3 text-white font-medium">{call.contactName}</td>
-                    <td className="py-3 text-muted tabular-nums text-xs">{call.phone || '--'}</td>
+                    <td className="py-3 font-mono tabular-nums text-xs">{call.phone ? <a href={`tel:${call.phone.replace(/\s/g, '')}`} className="text-muted hover:text-white transition-colors">{call.phone}</a> : <span className="text-dim">—</span>}</td>
                     <td className="py-3 text-muted">
                       {new Date(call.start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', weekday: 'short' })}
                     </td>

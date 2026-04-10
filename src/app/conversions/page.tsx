@@ -177,7 +177,7 @@ export default function ConversionsPage() {
                     <tr key={i} className="border-b border-[#1A1A1A]/40 hover:bg-white/[0.02]">
                       <td className="py-2 pl-4 text-dim">{i + 1}</td>
                       <td className="py-2"><p className="text-white">{r.name}</p><p className="text-[10px] text-dim">{r.email}</p></td>
-                      <td className="py-2 text-muted font-mono">{r.phone || '--'}</td>
+                      <td className="py-2 font-mono tabular-nums">{r.phone ? <a href={`tel:${r.phone.replace(/\s/g, '')}`} className="text-muted hover:text-white transition-colors">{r.phone}</a> : <span className="text-dim">—</span>}</td>
                       <td className="py-2 text-muted">{new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</td>
                       <td className="py-2"><span className={`inline-flex items-center gap-1 ${cfg.color}`}><span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />{cfg.label}</span></td>
                       <td className="py-2 pr-4 text-dim hidden sm:table-cell">{r.value ? `$${Math.round(r.value).toLocaleString()}` : r.stage || '--'}</td>
@@ -222,6 +222,7 @@ export default function ConversionsPage() {
                 <thead><tr className="text-left border-b border-[#1A1A1A]">
                   <th className="py-3 pl-6 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">#</th>
                   <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">Name</th>
+                  <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">Phone</th>
                   <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">Date</th>
                   <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555]">Platform</th>
                   <th className="py-3 text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] hidden lg:table-cell">Source</th>
@@ -236,6 +237,11 @@ export default function ConversionsPage() {
                       <tr key={i} className="fade-in-row border-b border-[#1A1A1A]/50 last:border-0 hover:bg-white/[0.02]" style={{ animationDelay: `${i * 20}ms` }}>
                         <td className="py-3 pl-6 text-dim tabular-nums">{i + 1}</td>
                         <td className="py-3"><p className="text-white font-medium">{r.name}</p><p className="text-[11px] text-dim">{r.email}</p></td>
+                        <td className="py-3 text-xs font-mono tabular-nums">
+                          {r.phone
+                            ? <a href={`tel:${r.phone.replace(/\s/g, '')}`} className="text-muted hover:text-white transition-colors">{r.phone}</a>
+                            : <span className="text-dim">—</span>}
+                        </td>
                         <td className="py-3 text-xs text-muted">{new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</td>
                         <td className="py-3">
                           {r.platform && r.platform !== 'Other' ? (
