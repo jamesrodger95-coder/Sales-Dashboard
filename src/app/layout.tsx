@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import TopNav from "@/components/TopNav";
 import SplashScreen from "@/components/SplashScreen";
+import ChatAssistant from "@/components/ChatAssistant";
 
 export const metadata: Metadata = {
   title: "Bryant Dental — Sales Intelligence",
@@ -21,6 +22,7 @@ export default function RootLayout({
         <main className="pt-14 min-h-screen">
           {children}
         </main>
+        <ChatAssistant />
       </body>
     </html>
   );
