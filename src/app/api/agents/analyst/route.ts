@@ -3,7 +3,8 @@ export const maxDuration = 60;
 
 import { NextResponse } from 'next/server';
 import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail, extractPhone, extractCountry, extractMeetingNotes, detectBookingPlatform, hasPrepNotes } from '@/lib/google-calendar';
-import { fetchAllJamesLeads, fetchAllJamesDeals, isZohoConfigured, getLeadPhone, buildEmailMaps, isInMonth, getMfgStatus } from '@/lib/zoho-client';
+import { fetchAllJamesLeads, fetchAllJamesDeals, isZohoConfigured, buildEmailMaps, isInMonth } from '@/lib/zoho-client';
+import { getAttentionNeeded, getManufacturingSummary, getConversionStats } from '@/lib/data-engine';
 
 // In-memory cache
 let cachedReport: { date: string; data: Record<string, unknown>; generatedAt: string } | null = null;
@@ -72,54 +73,28 @@ export async function POST() {
         const activeDealCounts: Record<string, number> = {};
         deals.filter(d => activeStages.includes(d.Stage)).forEach(d => { activeDealCounts[d.Stage] = (activeDealCounts[d.Stage] || 0) + 1; });
 
-        // Orders this month
+        // Shared data engine — same logic as dashboard, pipeline, chatbot
         const ordersThisMonth = deals.filter(d => isInMonth(d.Created_Time, now.getFullYear(), now.getMonth())).length;
-
-        // Conversion
-        let ordered = 0, demoDone = 0, directCount = 0;
-        monthCalls.forEach(e => {
+        const calEmails = monthCalls.map(e => ({ email: getExternalAttendeeEmail(e) }));
+        const conv = getConversionStats(calEmails, leadsByEmail, dealsByEmail);
+        const directCount = monthCalls.filter(e => {
           const email = getExternalAttendeeEmail(e).toLowerCase();
-          if (!email) return;
-          if (dealsByEmail.has(email)) { ordered++; return; }
-          const lead = leadsByEmail.get(email);
-          if (!lead) { directCount++; return; }
-          if (lead.Status === 'Virtual Demo Completed' || lead.Status === 'Demo Completed') demoDone++;
-        });
-        const showedUp = ordered + demoDone;
-        const convRate = showedUp > 0 ? Math.round((ordered / showedUp) * 100) : 0;
-        conversionSummary = `Conversion: ${convRate}% (${ordered} ordered from ${showedUp} demos). Direct bookings (no CRM): ${directCount} of ${monthCalls.length} (${Math.round(directCount / Math.max(monthCalls.length, 1) * 100)}%)`;
+          return email && !leadsByEmail.has(email) && !dealsByEmail.has(email);
+        }).length;
+        conversionSummary = `Conversion: ${conv.convRate}% (${conv.ordered} ordered from ${conv.showedUp} demos). Direct bookings (no CRM): ${directCount} of ${monthCalls.length} (${Math.round(directCount / Math.max(monthCalls.length, 1) * 100)}%)`;
 
-        // Follow-up items (top 15 most urgent)
-        leads.forEach(l => {
-          const days = Math.floor((nowMs - new Date(l.Modified_Time).getTime()) / 86400000);
-          const phone = getLeadPhone(l);
-          if ((!l.Status || l.Status === 'Registered' || l.Status === 'Not Contacted') && days > 1 && days <= 14) {
-            followUpItems.push({ severity: 'red', name: l.Full_Name, stage: 'Registered', days, contact: phone, action: `Contact ${l.Full_Name} — registered ${days} days ago, ${l.Country || 'unknown country'}` });
-          } else if (l.Status === 'No Show' && days <= 14) {
-            followUpItems.push({ severity: 'red', name: l.Full_Name, stage: 'No Show', days, contact: phone, action: `Rebook ${l.Full_Name} — no-showed ${days} days ago` });
-          } else if ((l.Status === 'Virtual Demo Completed' || l.Status === 'Demo Completed') && days > 7 && days <= 30) {
-            followUpItems.push({ severity: 'amber', name: l.Full_Name, stage: 'VDC', days, contact: phone, action: `Follow up ${l.Full_Name} — demo ${days} days ago, no order yet` });
-          }
-        });
+        // Follow-up items from shared data engine
+        const attention = getAttentionNeeded(leads, deals);
+        followUpItems = attention.slice(0, 15).map(a => ({
+          severity: a.priority, name: a.name, stage: a.stage, days: a.days,
+          contact: a.phone || null, action: a.action,
+        }));
 
-        // Manufacturing
-        const inMfg = deals.filter(d => d.Stage === 'In Manufacturing');
-        const mfgByStatus: Record<string, number> = { on_track: 0, approaching: 0, overdue: 0 };
-        const overdueNames: string[] = [];
-        const approachingNames: string[] = [];
-        inMfg.forEach(d => {
-          const m = getMfgStatus(d);
-          mfgByStatus[m.status]++;
-          if (m.status === 'overdue') {
-            overdueNames.push(`${d.Deal_Name} (${m.product} Wk ${m.weeksElapsed}/${m.targetWeeks})`);
-            followUpItems.push({ severity: 'red', name: d.Deal_Name, stage: `${m.product} Wk ${m.weeksElapsed}/${m.targetWeeks}`, days: m.weeksElapsed * 7, contact: d.Phone, action: `Update ${d.Deal_Name} — ${m.product} overdue by ${m.weeksElapsed - m.targetWeeks} weeks` });
-          } else if (m.status === 'approaching') {
-            approachingNames.push(`${d.Deal_Name} (${m.product} Wk ${m.weeksElapsed}/${m.targetWeeks})`);
-          }
-        });
-        mfgSummary = `Manufacturing: ${inMfg.length} orders (${mfgByStatus.on_track} on track, ${mfgByStatus.approaching} approaching, ${mfgByStatus.overdue} overdue).${overdueNames.length > 0 ? ' Overdue: ' + overdueNames.slice(0, 5).join(', ') : ''}`;
+        // Manufacturing from shared data engine
+        const mfg = getManufacturingSummary(deals);
+        const overdueNames = mfg.orders.filter(o => o.status === 'overdue').slice(0, 5).map(o => `${o.name} (${o.product} Wk ${o.weeksElapsed}/${o.targetWeeks})`);
+        mfgSummary = `Manufacturing: ${mfg.total} orders (${mfg.onTrack} on track, ${mfg.approaching} approaching, ${mfg.overdue} overdue).${overdueNames.length > 0 ? ' Overdue: ' + overdueNames.join(', ') : ''}`;
 
-        // Pipeline summary text
         pipelineSummary = [
           `Lead stages (last 30d): ${Object.entries(stages).map(([s, c]) => `${s}: ${c}`).join(', ')}`,
           `Active orders: ${Object.entries(activeDealCounts).map(([s, c]) => `${s}: ${c}`).join(', ')}`,
@@ -127,10 +102,6 @@ export async function POST() {
           conversionSummary,
           mfgSummary,
         ].join('\n');
-
-        // Sort follow-ups
-        followUpItems.sort((a) => a.severity === 'red' ? -1 : 1);
-        followUpItems = followUpItems.slice(0, 15);
       } catch (err) {
         console.error('[Analyst] Zoho error (non-fatal):', err);
         pipelineSummary = 'Zoho data unavailable';

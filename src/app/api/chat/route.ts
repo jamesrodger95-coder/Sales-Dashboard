@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 import { NextRequest, NextResponse } from 'next/server';
-import { searchByName, getTodaySchedule, getTomorrowSchedule, getPipelineSummary, getManufacturingStatus, getMonthStats, getFollowUps } from '@/lib/search';
+import { searchByName, getTodaySchedule, getTomorrowSchedule, getPipelineSummaryText, getManufacturingStatusText, getMonthStats, getFollowUpsText } from '@/lib/search';
 
 const SYSTEM_PROMPT = `You are James Rodger's AI sales assistant at Bryant Dental — a UK dental MedTech company selling the world's lightest ergonomic loupes and headlights. James leads a 3-person sales team.
 
@@ -48,19 +48,19 @@ export async function POST(request: NextRequest) {
 
       // Pipeline / stage queries
       if (q.includes('pipeline') || q.includes('stage') || q.includes('registered') || q.includes('contact') || q.includes('lead')) {
-        context += 'PIPELINE:\n' + await getPipelineSummary() + '\n\n';
+        context += 'PIPELINE:\n' + await getPipelineSummaryText() + '\n\n';
         dataFetched = true;
       }
 
       // Manufacturing queries
       if (q.includes('manufactur') || q.includes('production') || q.includes('delayed') || q.includes('overdue') || q.includes('magniflex') || q.includes('refractive')) {
-        context += 'MANUFACTURING:\n' + await getManufacturingStatus() + '\n\n';
+        context += 'MANUFACTURING:\n' + await getManufacturingStatusText() + '\n\n';
         dataFetched = true;
       }
 
       // Follow-up queries
       if (q.includes('follow') || q.includes('chase') || q.includes('urgent') || q.includes('action') || q.includes('va ') || q.includes('team')) {
-        context += 'FOLLOW-UPS:\n' + await getFollowUps() + '\n\n';
+        context += 'FOLLOW-UPS:\n' + await getFollowUpsText() + '\n\n';
         dataFetched = true;
       }
 

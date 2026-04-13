@@ -1,8 +1,9 @@
 // Search utilities for the AI chat assistant
-// Searches across Google Calendar and Zoho CRM
+// Uses shared data-engine for consistent numbers
 
 import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail, extractPhone, extractCountry } from './google-calendar';
-import { fetchAllJamesLeads, fetchAllJamesDeals, isZohoConfigured, getDealValue, getLeadPhone, getMfgStatus } from './zoho-client';
+import { fetchAllJamesLeads, fetchAllJamesDeals, isZohoConfigured, getDealValue, getLeadPhone, buildEmailMaps } from './zoho-client';
+import { getAttentionNeeded, getManufacturingSummary, getPipelineCounts, getConversionStats } from './data-engine';
 
 export interface SearchResult {
   name: string;
@@ -22,7 +23,6 @@ export async function searchByName(name: string): Promise<SearchResult[]> {
   const q = name.toLowerCase();
   const now = Date.now();
 
-  // Search calendar (last 3 months)
   try {
     const threeMonthsAgo = new Date(now - 90 * 86400000);
     const events = await fetchCalendarEvents(threeMonthsAgo.toISOString(), new Date().toISOString());
@@ -38,35 +38,23 @@ export async function searchByName(name: string): Promise<SearchResult[]> {
     });
   } catch { /* calendar unavailable */ }
 
-  // Search Zoho leads
   if (isZohoConfigured()) {
     try {
       const leads = await fetchAllJamesLeads();
       leads.forEach(l => {
         if (l.Full_Name?.toLowerCase().includes(q)) {
           const days = Math.floor((now - new Date(l.Modified_Time).getTime()) / 86400000);
-          results.push({
-            name: l.Full_Name, email: l.Email, phone: getLeadPhone(l),
-            country: l.Country, source: 'zoho_lead', stage: l.Status || 'No Status', days,
-            extra: `Lead: ${l.Status || 'No Status'} (${days}d)`,
-          });
+          results.push({ name: l.Full_Name, email: l.Email, phone: getLeadPhone(l), country: l.Country, source: 'zoho_lead', stage: l.Status || 'No Status', days, extra: `Lead: ${l.Status || 'No Status'} (${days}d)` });
         }
       });
-
-      // Search Zoho deals
       const deals = await fetchAllJamesDeals();
       deals.forEach(d => {
         if (d.Deal_Name?.toLowerCase().includes(q)) {
-          results.push({
-            name: d.Deal_Name, email: d.Email, phone: d.Phone,
-            country: d.Country, source: 'zoho_deal', stage: d.Stage, value: getDealValue(d),
-            extra: `Order: ${d.Stage} ($${Math.round(getDealValue(d)).toLocaleString()})`,
-          });
+          results.push({ name: d.Deal_Name, email: d.Email, phone: d.Phone, country: d.Country, source: 'zoho_deal', stage: d.Stage, value: getDealValue(d), extra: `Order: ${d.Stage} ($${Math.round(getDealValue(d)).toLocaleString()})` });
         }
       });
     } catch { /* zoho unavailable */ }
   }
-
   return results;
 }
 
@@ -96,50 +84,34 @@ export async function getTomorrowSchedule(): Promise<string> {
   }).join('\n');
 }
 
-export async function getPipelineSummary(): Promise<string> {
+// Uses shared data engine — same numbers as dashboard
+export async function getPipelineSummaryText(): Promise<string> {
   if (!isZohoConfigured()) return 'Zoho CRM not connected.';
   const [leads, deals] = await Promise.all([fetchAllJamesLeads(), fetchAllJamesDeals()]);
-  const now = Date.now();
-  const D30 = 30 * 86400000;
+  const pipeline = getPipelineCounts(leads, deals);
 
-  // Recent leads by stage
-  const stages: Record<string, number> = {};
-  leads.filter(l => (now - new Date(l.Modified_Time).getTime()) < D30).forEach(l => {
-    const s = l.Status || 'No Status';
-    stages[s] = (stages[s] || 0) + 1;
-  });
-
-  // Active deals
-  const active = ['Awaiting Measurements', 'Measurements Final Checks', 'Measurement Issues', 'In Manufacturing', 'Order Assembled', 'Order Ready to Send', 'Address Confirmed'];
-  const dealCounts: Record<string, number> = {};
-  deals.filter(d => active.includes(d.Stage)).forEach(d => { dealCounts[d.Stage] = (dealCounts[d.Stage] || 0) + 1; });
-
-  const lines = ['LEADS (last 30 days):'];
-  Object.entries(stages).sort(([,a],[,b]) => b - a).forEach(([s, c]) => lines.push(`  ${s}: ${c}`));
+  const lines = ['LEADS (recent, filtered):'];
+  Object.entries(pipeline.leadStages).sort(([,a],[,b]) => b - a).forEach(([s, c]) => lines.push(`  ${s}: ${c}`));
+  lines.push(`  Active leads: ${pipeline.activeLeads}`);
   lines.push('\nACTIVE ORDERS:');
-  Object.entries(dealCounts).sort(([,a],[,b]) => b - a).forEach(([s, c]) => lines.push(`  ${s}: ${c}`));
+  Object.entries(pipeline.dealStages).sort(([,a],[,b]) => b - a).forEach(([s, c]) => lines.push(`  ${s}: ${c}`));
+  lines.push(`  Pipeline value: $${Math.round(pipeline.activePipelineValue).toLocaleString()}`);
   return lines.join('\n');
 }
 
-export async function getManufacturingStatus(): Promise<string> {
+// Uses shared data engine — same numbers as dashboard
+export async function getManufacturingStatusText(): Promise<string> {
   if (!isZohoConfigured()) return 'Zoho CRM not connected.';
   const deals = await fetchAllJamesDeals();
-  const inMfg = deals.filter(d => d.Stage === 'In Manufacturing');
-  if (inMfg.length === 0) return 'No orders currently in manufacturing.';
+  const mfg = getManufacturingSummary(deals);
+  if (mfg.total === 0) return 'No orders currently in manufacturing.';
 
-  const lines = [`${inMfg.length} orders in manufacturing:`];
-  const overdue: string[] = [], approaching: string[] = [], onTrack: string[] = [];
-  inMfg.forEach(d => {
-    const m = getMfgStatus(d);
-    const line = `${d.Deal_Name} — ${m.product} — Wk ${m.weeksElapsed}/${m.targetWeeks} — ${d.Country || '?'}`;
-    if (m.status === 'overdue') overdue.push(line);
-    else if (m.status === 'approaching') approaching.push(line);
-    else onTrack.push(line);
-  });
-
-  if (overdue.length) { lines.push(`\nOVERDUE (${overdue.length}):`); overdue.slice(0, 10).forEach(l => lines.push(`  ${l}`)); }
-  if (approaching.length) { lines.push(`\nAPPROACHING (${approaching.length}):`); approaching.slice(0, 10).forEach(l => lines.push(`  ${l}`)); }
-  lines.push(`\nON TRACK: ${onTrack.length}`);
+  const lines = [`${mfg.total} orders in manufacturing (${mfg.onTrack} on track, ${mfg.approaching} approaching, ${mfg.overdue} overdue):`];
+  const overdue = mfg.orders.filter(o => o.status === 'overdue');
+  const approaching = mfg.orders.filter(o => o.status === 'approaching');
+  if (overdue.length) { lines.push(`\nOVERDUE (${overdue.length}):`); overdue.slice(0, 10).forEach(o => lines.push(`  ${o.name} — ${o.product} — Wk ${o.weeksElapsed}/${o.targetWeeks} — ${o.country || '?'}`)); }
+  if (approaching.length) { lines.push(`\nAPPROACHING (${approaching.length}):`); approaching.slice(0, 10).forEach(o => lines.push(`  ${o.name} — ${o.product} — Wk ${o.weeksElapsed}/${o.targetWeeks} — ${o.country || '?'}`)); }
+  lines.push(`\nON TRACK: ${mfg.onTrack}`);
   return lines.join('\n');
 }
 
@@ -147,60 +119,28 @@ export async function getMonthStats(year: number, month: number): Promise<string
   const mStart = new Date(year, month, 1);
   const mEnd = new Date(year, month + 1, 0, 23, 59, 59);
   const label = mStart.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
-
   const events = await fetchCalendarEvents(mStart.toISOString(), mEnd.toISOString());
   const calls = events.filter(isSalesCall);
-
   const lines = [`${label}: ${calls.length} sales calls`];
 
   if (isZohoConfigured()) {
     const [leads, deals] = await Promise.all([fetchAllJamesLeads(), fetchAllJamesDeals()]);
-    const { buildEmailMaps } = await import('./zoho-client');
-    const { dealsByEmail } = buildEmailMaps(leads, deals);
-
-    let ordered = 0, demoDone = 0;
-    calls.forEach(e => {
-      const email = getExternalAttendeeEmail(e).toLowerCase();
-      if (dealsByEmail.has(email)) ordered++;
-      const lead = leads.find(l => l.Email?.toLowerCase() === email);
-      if (lead?.Status === 'Virtual Demo Completed' || lead?.Status === 'Demo Completed') demoDone++;
-    });
-    const showedUp = ordered + demoDone;
-    const convRate = showedUp > 0 ? Math.round((ordered / showedUp) * 100) : 0;
-    lines.push(`Ordered: ${ordered}, Demo Done: ${demoDone}`);
-    lines.push(`Conversion rate: ${convRate}% (${ordered} from ${showedUp} demos)`);
+    const { leadsByEmail, dealsByEmail } = buildEmailMaps(leads, deals);
+    const calEmails = calls.map(e => ({ email: getExternalAttendeeEmail(e) }));
+    const conv = getConversionStats(calEmails, leadsByEmail, dealsByEmail);
+    lines.push(`Ordered: ${conv.ordered}, Demo Done: ${conv.demoDone}`);
+    lines.push(`Conversion rate: ${conv.convRate}% (${conv.ordered} from ${conv.showedUp} demos)`);
   }
-
   return lines.join('\n');
 }
 
-export async function getFollowUps(): Promise<string> {
+// Uses shared data engine — same items as dashboard
+export async function getFollowUpsText(): Promise<string> {
   if (!isZohoConfigured()) return 'Zoho CRM not connected.';
   const [leads, deals] = await Promise.all([fetchAllJamesLeads(), fetchAllJamesDeals()]);
-  const now = Date.now();
-  const items: string[] = [];
-
-  leads.forEach(l => {
-    const days = Math.floor((now - new Date(l.Modified_Time).getTime()) / 86400000);
-    if ((!l.Status || l.Status === 'Registered' || l.Status === 'Not Contacted') && days > 1 && days <= 14) {
-      items.push(`[RED] ${l.Full_Name} — Registered ${days}d ago, ${l.Country || '?'} — contact ASAP`);
-    } else if (l.Status === 'No Show' && days <= 14) {
-      items.push(`[RED] ${l.Full_Name} — No Show ${days}d ago — rebook demo`);
-    } else if ((l.Status === 'Virtual Demo Completed' || l.Status === 'Demo Completed') && days > 7 && days <= 30) {
-      items.push(`[AMBER] ${l.Full_Name} — Demo done ${days}d ago — follow up`);
-    }
-  });
-
-  deals.forEach(d => {
-    const days = Math.floor((now - new Date(d.Modified_Time).getTime()) / 86400000);
-    if (d.Stage === 'Awaiting Measurements' && days > 10) {
-      items.push(`[RED] ${d.Deal_Name} — Awaiting measurements ${days}d — chase`);
-    }
-    if (d.Stage === 'In Manufacturing') {
-      const m = getMfgStatus(d);
-      if (m.status === 'overdue') items.push(`[RED] ${d.Deal_Name} — ${m.product} Wk ${m.weeksElapsed}/${m.targetWeeks} — overdue`);
-    }
-  });
-
-  return items.length > 0 ? items.slice(0, 15).join('\n') : 'No urgent follow-ups right now.';
+  const items = getAttentionNeeded(leads, deals);
+  if (items.length === 0) return 'No urgent follow-ups right now.';
+  return `${items.length} items needing attention:\n` + items.slice(0, 15).map(f =>
+    `[${f.priority.toUpperCase()}] ${f.name} — ${f.stage} — ${f.days}d — ${f.action}`
+  ).join('\n');
 }

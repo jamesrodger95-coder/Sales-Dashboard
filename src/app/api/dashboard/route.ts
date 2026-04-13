@@ -142,87 +142,42 @@ export async function GET() {
 
     console.log(`[Dashboard] Sales calls: ${monthlySalesCalls.length}, Total 3mo: ${salesCalls.length}, Today: ${todaySchedule.length}, Tomorrow: ${tomorrowSchedule.length}`);
 
-    // Zoho CRM data (non-blocking)
+    // Zoho CRM data (non-blocking) — uses shared data engine for consistency
     let zoho = null;
     try {
-      const { isZohoConfigured, fetchAllJamesDeals, fetchAllJamesLeads, getDealValue, categorizeLeadStatus, categorizeDealStage, buildEmailMaps } = await import('@/lib/zoho-client');
+      const { isZohoConfigured, fetchAllJamesDeals, fetchAllJamesLeads, buildEmailMaps } = await import('@/lib/zoho-client');
+      const { getAttentionNeeded, getPipelineCounts, getConversionStats, getManufacturingSummary } = await import('@/lib/data-engine');
       if (isZohoConfigured()) {
         const [leads, deals] = await Promise.all([fetchAllJamesLeads(), fetchAllJamesDeals()]);
-        const nowMs = Date.now();
-        const D30 = 30 * 86400000;
-        const D60 = 60 * 86400000;
-
-        // Active pipeline value = only orders in production stages (not all-time)
-        const activeOrderStages = ['Awaiting Measurements', 'Pending Payment Authorisation', 'Customers Not Ordered', 'Measurement Issues', 'Measurements Final Checks', 'Prescription Ordered', 'In Manufacturing', 'Order Assembled', 'Address Confirmed', 'Order Ready to Send'];
-        const activePipelineValue = deals.filter(d => activeOrderStages.includes(d.Stage)).reduce((s: number, d) => s + getDealValue(d), 0);
-
-        // Active leads = recent pre-purchase + demo_done only (last 60 days, not 500-day-old leads)
-        const activeLeads = leads.filter(l => {
-          const cat = categorizeLeadStatus(l.Status);
-          const stageAge = nowMs - new Date(l.Modified_Time).getTime();
-          if (cat === 'pre_purchase') return stageAge <= D30;
-          if (cat === 'demo_done') return stageAge <= D60;
-          return false;
-        }).length;
-
-        // Conversion rate: ordered / (ordered + demo_done) for current month calls
         const { leadsByEmail, dealsByEmail } = buildEmailMaps(leads, deals);
-        let orderedCount = 0;
-        let demoDoneCount = 0;
-        monthlySalesCalls.forEach(e => {
-          const email = getExternalAttendeeEmail(e).toLowerCase();
-          if (!email) return;
-          if (dealsByEmail.has(email)) { orderedCount++; return; }
-          const lead = leadsByEmail.get(email);
-          if (lead?.Status === 'Purchased') { orderedCount++; return; }
-          if (lead?.Status === 'Virtual Demo Completed' || lead?.Status === 'Demo Completed') { demoDoneCount++; }
-        });
-        const showedUp = orderedCount + demoDoneCount;
-        const conversionRate = showedUp > 0 ? Math.round((orderedCount / showedUp) * 100) : 0;
 
-        // Follow-up counts (only recent actionable items, not 500-day-old leads)
-        let redCount = 0;
-        leads.forEach(l => {
-          const days = Math.floor((nowMs - new Date(l.Modified_Time).getTime()) / 86400000);
-          if (l.Status === 'No Show' && days <= 7) redCount++;
-          else if ((l.Status === 'Virtual Demo Completed' || l.Status === 'Demo Completed') && days > 7 && days <= 30) redCount++;
-          else if (l.Status === 'First Contact Made' && days > 10 && days <= 30) redCount++;
-          else if ((!l.Status || l.Status === 'Registered' || l.Status === 'Not Contacted') && days > 1 && days <= 14) redCount++;
-        });
-        const { getMfgStatus: getMfg } = await import('@/lib/zoho-client');
-        deals.forEach(d => {
-          const days = Math.floor((nowMs - new Date(d.Modified_Time).getTime()) / 86400000);
-          if (d.Stage === 'Awaiting Measurements' && days > 10) redCount++;
-          if (d.Stage === 'In Manufacturing') {
-            const m = getMfg(d);
-            if (m.status === 'overdue') redCount++;
-          }
-          if (d.Stage === 'Measurement Issues') redCount++;
-        });
+        // Shared functions — same logic everywhere
+        const pipeline = getPipelineCounts(leads, deals);
+        const attention = getAttentionNeeded(leads, deals);
+        const calEmails = monthlySalesCalls.map(e => ({ email: getExternalAttendeeEmail(e) }));
+        const conv = getConversionStats(calEmails, leadsByEmail, dealsByEmail);
+        const mfg = getManufacturingSummary(deals);
 
-        // Pipeline summary
-        const leadSummary: Record<string, number> = {};
-        leads.forEach(l => { const c = categorizeLeadStatus(l.Status); leadSummary[c] = (leadSummary[c] || 0) + 1; });
-        const dealSummary: Record<string, number> = {};
-        deals.forEach(d => { const c = categorizeDealStage(d.Stage); dealSummary[c] = (dealSummary[c] || 0) + 1; });
+        const ordersThisMonth = deals.filter(d => {
+          const created = new Date(d.Created_Time);
+          return created >= monthStart && created <= monthEnd;
+        }).length;
 
         zoho = {
           connected: true,
           totalLeads: leads.length,
           totalDeals: deals.length,
-          totalValue: Math.round(activePipelineValue),
-          activeLeads,
-          conversionRate,
-          convRateDetail: `${orderedCount} from ${showedUp} demos`,
-          followUpsNeeded: redCount,
-          leadSummary,
-          dealSummary,
-          ordersThisMonth: deals.filter(d => {
-            const created = new Date(d.Created_Time);
-            return created >= monthStart && created <= monthEnd;
-          }).length,
+          totalValue: Math.round(pipeline.activePipelineValue),
+          activeLeads: pipeline.activeLeads,
+          conversionRate: conv.convRate,
+          convRateDetail: `${conv.ordered} from ${conv.showedUp} demos`,
+          followUpsNeeded: attention.length,
+          leadSummary: pipeline.leadStages,
+          dealSummary: pipeline.dealStages,
+          manufacturing: { total: mfg.total, onTrack: mfg.onTrack, approaching: mfg.approaching, overdue: mfg.overdue },
+          ordersThisMonth,
         };
-        console.log(`[Dashboard] Zoho: ${leads.length} leads, ${deals.length} deals, $${Math.round(activePipelineValue)} active, ${conversionRate}% conversion`);
+        console.log(`[Dashboard] Zoho: ${leads.length} leads, ${deals.length} deals, $${Math.round(pipeline.activePipelineValue)} active, ${conv.convRate}% conversion, ${attention.length} attention items`);
       }
     } catch (zohoErr) {
       console.error('[Dashboard] Zoho error (non-fatal):', zohoErr);
