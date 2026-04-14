@@ -11,9 +11,11 @@ const QUICK_ACTIONS = [
   { label: "Today's calls", msg: "What calls do I have today?" },
   { label: 'Pipeline', msg: "Give me a pipeline summary" },
   { label: 'Follow-ups', msg: "Who needs follow-up?" },
-  { label: 'Delayed orders', msg: "Are any orders delayed?" },
-  { label: 'This month', msg: "How is this month going?" },
-  { label: 'No-shows', msg: "Show me recent no-shows" },
+  { label: 'Lead sources', msg: "Where do my leads come from?" },
+  { label: 'Overdue orders', msg: "Which manufacturing orders are overdue?" },
+  { label: 'Direct bookings', msg: "Show direct bookings not in CRM" },
+  { label: 'This vs last month', msg: "Compare this month to last month" },
+  { label: 'No-show patterns', msg: "What patterns in my no-shows?" },
 ];
 
 export default function ChatAssistant() {

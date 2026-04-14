@@ -2,118 +2,122 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 import { NextRequest, NextResponse } from 'next/server';
-import { searchByName, getTodaySchedule, getTomorrowSchedule, getPipelineSummaryText, getManufacturingStatusText, getMonthStats, getFollowUpsText } from '@/lib/search';
+import {
+  searchPersonDeep, getTodaySchedule, getTomorrowSchedule,
+  getPipelineSummaryText, getManufacturingStatusText, getMonthStats,
+  getFollowUpsText, getLeadSourceAnalysis, getBookingPlatformAnalysis,
+  getDirectBookingsText, getMonthComparison, getNoShowPatterns,
+} from '@/lib/search';
 
-const SYSTEM_PROMPT = `You are James Rodger's AI sales assistant at Bryant Dental — a UK dental MedTech company selling the world's lightest ergonomic loupes and headlights. James leads a 3-person sales team.
+const SYSTEM_PROMPT = `You are James Rodger's sales intelligence assistant for Bryant Dental — a UK dental MedTech company selling the world's lightest ergonomic loupes and headlights.
 
-You have access to real-time data from Google Calendar and Zoho CRM. When data is provided to you, reference it directly with specific names and numbers. Be concise and direct — James checks you on his phone.
+You have deep access to:
 
-Products: Refractive Pro (2.9x, 3.8x, 5.7x, 7.8x) — 12 week mfg. MagniFlex (3-in-1) — 20 week mfg. Ignis 4 headlight. Halo headlight.
+1. ZOHO CRM (Leads): full profiles with Lead_Source (where they came from: Website, Google Ads, Referral, EuroLeads, etc.), Status (pipeline stage), country, city, contact info, dates.
 
-Rules:
-- Be specific: use names, numbers, dates
-- Be brief: 2-5 sentences for simple queries, bullet lists for data
-- If data is provided, summarize it clearly
-- If you can't find something, say so honestly
-- Never make up data or people
-- Phone numbers should be clickable
-- Current context: always aware of today's date`;
+2. ZOHO CRM (Deals/Orders): stage, product type (Refractive 2.9/3.8/5.7/7.8x or MagniFlex), lighting selection, order value, manufacturing timelines (MagniFlex=20wk, Refractive=12wk).
+
+3. GOOGLE CALENDAR: all calls with booking platform detection (Calendly vs Cal.com), attendance commitment (Yes/No), prep notes from leads, country, phone.
+
+4. CROSS-REFERENCE: calendar emails matched to Zoho leads and deals to determine conversion status.
+
+When answering:
+- Be specific: real names, numbers, dates, percentages
+- Always mention Lead_Source when discussing any lead
+- Always mention booking platform (Calendly/Cal.com) when discussing bookings
+- For person lookups: combine CRM + Calendar + Order data into one profile
+- Format cleanly with sections and bullet points
+- Phone numbers as clickable links: [+44...](tel:+44...)
+- If data seems incomplete, say what you couldn't find
+- Be concise — James checks this on his phone`;
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { message, history = [] } = body;
-
-    if (!message) {
-      return NextResponse.json({ reply: 'Please ask a question.' });
-    }
+    if (!message) return NextResponse.json({ reply: 'Ask me anything about your sales data.' });
 
     const q = message.toLowerCase();
     const now = new Date();
-
-    // Determine what data to fetch based on the question
     let context = '';
-    let dataFetched = false;
 
     try {
-      // Schedule queries
-      if (q.includes('today') || q.includes('schedule') || q.includes('calls today')) {
-        context += 'TODAY\'S SCHEDULE:\n' + await getTodaySchedule() + '\n\n';
-        dataFetched = true;
+      // Person search — detect names or "find/search/status/who is" queries
+      const isPersonQuery = /find|search|who is|status of|tell me about|look up|check on/i.test(q);
+      const stopWords = new Set(['find', 'search', 'show', 'me', 'who', 'is', 'the', 'of', 'has', 'did', 'what', 'when', 'where', 'how', 'my', 'all', 'any', 'a', 'an', 'in', 'for', 'to', 'from', 'with', 'about', 'ordered', 'status', 'stage', 'today', 'this', 'month', 'week', 'tell', 'look', 'up', 'check', 'on']);
+      const nameWords = message.split(/\s+/).filter((w: string) => !stopWords.has(w.toLowerCase()) && w.length > 2);
+      const nameQuery = nameWords.join(' ');
+
+      // Route to the right data fetcher(s)
+      const fetches: Promise<string>[] = [];
+      const labels: string[] = [];
+
+      if (q.includes('today') || q.includes('schedule today') || q.includes('calls today')) {
+        fetches.push(getTodaySchedule()); labels.push("TODAY'S SCHEDULE");
       }
       if (q.includes('tomorrow')) {
-        context += 'TOMORROW\'S SCHEDULE:\n' + await getTomorrowSchedule() + '\n\n';
-        dataFetched = true;
+        fetches.push(getTomorrowSchedule()); labels.push("TOMORROW'S SCHEDULE");
       }
-
-      // Pipeline / stage queries
-      if (q.includes('pipeline') || q.includes('stage') || q.includes('registered') || q.includes('contact') || q.includes('lead')) {
-        context += 'PIPELINE:\n' + await getPipelineSummaryText() + '\n\n';
-        dataFetched = true;
+      if (q.includes('pipeline') || q.includes('stages') || (q.includes('lead') && !isPersonQuery)) {
+        fetches.push(getPipelineSummaryText()); labels.push('PIPELINE');
       }
-
-      // Manufacturing queries
-      if (q.includes('manufactur') || q.includes('production') || q.includes('delayed') || q.includes('overdue') || q.includes('magniflex') || q.includes('refractive')) {
-        context += 'MANUFACTURING:\n' + await getManufacturingStatusText() + '\n\n';
-        dataFetched = true;
+      if (q.includes('manufactur') || q.includes('production') || q.includes('delayed') || q.includes('overdue') || q.includes('magniflex')) {
+        fetches.push(getManufacturingStatusText()); labels.push('MANUFACTURING');
       }
-
-      // Follow-up queries
-      if (q.includes('follow') || q.includes('chase') || q.includes('urgent') || q.includes('action') || q.includes('va ') || q.includes('team')) {
-        context += 'FOLLOW-UPS:\n' + await getFollowUpsText() + '\n\n';
-        dataFetched = true;
+      if (q.includes('follow') || q.includes('chase') || q.includes('urgent') || q.includes('action') || q.includes('va ') || q.includes('team') || q.includes('should')) {
+        fetches.push(getFollowUpsText()); labels.push('FOLLOW-UPS');
       }
-
-      // Month stats
-      if (q.includes('this month') || q.includes('stats') || q.includes('conversion') || q.includes('rate')) {
-        context += 'THIS MONTH:\n' + await getMonthStats(now.getFullYear(), now.getMonth()) + '\n\n';
-        dataFetched = true;
+      if (q.includes('source') || q.includes('where do') || q.includes('channel') || q.includes('lead source') || q.includes('come from')) {
+        fetches.push(getLeadSourceAnalysis()); labels.push('LEAD SOURCES');
       }
-      if (q.includes('last month')) {
+      if (q.includes('calendly') || q.includes('cal.com') || q.includes('platform') || q.includes('booking source')) {
+        fetches.push(getBookingPlatformAnalysis(now.getFullYear(), now.getMonth())); labels.push('BOOKING PLATFORMS');
+      }
+      if (q.includes('direct booking') || q.includes('not in crm') || q.includes('no crm') || q.includes('missing from')) {
+        fetches.push(getDirectBookingsText(now.getFullYear(), now.getMonth())); labels.push('DIRECT BOOKINGS');
+      }
+      if (q.includes('no show') || q.includes('no-show') || q.includes('missed') || q.includes('pattern')) {
+        fetches.push(getNoShowPatterns()); labels.push('NO-SHOW PATTERNS');
+      }
+      if (q.includes('this month') || q.includes('stats') || (q.includes('rate') && !q.includes('source'))) {
+        fetches.push(getMonthStats(now.getFullYear(), now.getMonth())); labels.push('THIS MONTH');
+      }
+      if (q.includes('last month') || q.includes('previous month')) {
         const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        context += 'LAST MONTH:\n' + await getMonthStats(lm.getFullYear(), lm.getMonth()) + '\n\n';
-        dataFetched = true;
+        fetches.push(getMonthStats(lm.getFullYear(), lm.getMonth())); labels.push('LAST MONTH');
+      }
+      if (q.includes('compare') || q.includes(' vs ') || q.includes('versus')) {
+        const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        fetches.push(getMonthComparison(now.getFullYear(), now.getMonth(), lm.getFullYear(), lm.getMonth())); labels.push('MONTH COMPARISON');
       }
 
-      // Name-based search (if none of the above matched, or if a name is detected)
-      if (!dataFetched || /find|search|who is|status of|where|show me/i.test(q)) {
-        // Extract potential name (words that aren't common query words)
-        const stopWords = new Set(['find', 'search', 'show', 'me', 'who', 'is', 'the', 'of', 'has', 'did', 'what', 'when', 'where', 'how', 'my', 'all', 'any', 'a', 'an', 'in', 'for', 'to', 'from', 'with', 'about', 'ordered', 'status', 'stage', 'today', 'this', 'month', 'week']);
-        const nameWords = message.split(/\s+/).filter((w: string) => !stopWords.has(w.toLowerCase()) && w.length > 2);
-        const searchQuery = nameWords.join(' ');
+      // Person search — if nothing else matched or explicitly requested
+      if ((fetches.length === 0 || isPersonQuery) && nameQuery.length > 2) {
+        fetches.push(searchPersonDeep(nameQuery)); labels.push(`SEARCH: "${nameQuery}"`);
+      }
 
-        if (searchQuery.length > 2) {
-          const results = await searchByName(searchQuery);
-          if (results.length > 0) {
-            context += `SEARCH RESULTS for "${searchQuery}":\n`;
-            results.slice(0, 10).forEach(r => {
-              context += `- ${r.name} | ${r.source} | ${r.extra || ''} | ${r.phone || 'no phone'} | ${r.email || ''}\n`;
-            });
-            context += '\n';
-            dataFetched = true;
-          } else {
-            context += `No results found for "${searchQuery}"\n\n`;
-          }
+      // Fetch all data in parallel
+      const results = await Promise.allSettled(fetches);
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled' && r.value) {
+          context += `${labels[i]}:\n${r.value}\n\n`;
         }
-      }
-    } catch (fetchErr) {
-      context += `Data fetch error: ${fetchErr instanceof Error ? fetchErr.message : 'unknown'}\n\n`;
+      });
+    } catch (err) {
+      context += `Data fetch error: ${err instanceof Error ? err.message : 'unknown'}\n`;
     }
 
-    // Build messages for Claude
+    // Build Claude messages
     const messages = [
-      ...history.slice(-8).map((h: { role: string; content: string }) => ({
-        role: h.role, content: h.content,
-      })),
+      ...history.slice(-8).map((h: { role: string; content: string }) => ({ role: h.role, content: h.content })),
       {
         role: 'user' as const,
         content: context
-          ? `[DATA CONTEXT - today is ${now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}]\n${context}\n[USER QUESTION]\n${message}`
+          ? `[DATA — ${now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}]\n${context}[QUESTION]\n${message}`
           : message,
       },
     ];
 
-    // Call Claude
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -121,30 +125,18 @@ export async function POST(request: NextRequest) {
         'x-api-key': process.env.ANTHROPIC_API_KEY || '',
         'anthropic-version': '2023-06-01',
       },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        system: SYSTEM_PROMPT,
-        messages,
-      }),
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1200, system: SYSTEM_PROMPT, messages }),
     });
 
-    const claudeData = await claudeRes.json();
-
-    if (claudeData.error) {
-      console.error('[Chat] Claude error:', claudeData.error);
-      // Fallback: return raw context if we have it
-      if (context) {
-        return NextResponse.json({ reply: `I couldn't analyse that right now, but here's what I found:\n\n${context.substring(0, 500)}` });
-      }
-      return NextResponse.json({ reply: 'Sorry, I\'m having trouble right now. Try again in a moment.' });
+    const data = await claudeRes.json();
+    if (data.error) {
+      if (context) return NextResponse.json({ reply: `I couldn't analyse that, but here's the raw data:\n\n${context.substring(0, 600)}` });
+      return NextResponse.json({ reply: 'Sorry, having trouble right now. Try again.' });
     }
 
-    const reply = claudeData.content?.[0]?.text || 'No response generated.';
-
-    return NextResponse.json({ reply });
+    return NextResponse.json({ reply: data.content?.[0]?.text || 'No response.' });
   } catch (error: unknown) {
     console.error('[Chat]', error);
-    return NextResponse.json({ reply: 'Something went wrong. Please try again.' });
+    return NextResponse.json({ reply: 'Something went wrong. Try again.' });
   }
 }
