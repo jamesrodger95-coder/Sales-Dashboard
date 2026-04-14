@@ -25,12 +25,12 @@ export async function GET() {
   try {
     const now = new Date();
 
-    // Single fetch: 3 months back to 7 days ahead — covers dashboard + analytics
-    const threeMonthsAgo = new Date(now.getTime() - 90 * 86400000);
-    const sevenDaysAhead = new Date(now.getTime() + 7 * 86400000);
+    // Single fetch: start of 3 months ago to end of current month — covers dashboard + analytics
+    const fetchStart = new Date(now.getFullYear(), now.getMonth() - 3, 1); // 1st of 3 months ago
+    const fetchEnd = new Date(now.getFullYear(), now.getMonth() + 1, 7, 23, 59, 59); // 7 days into next month
 
     console.log('[Dashboard] Fetching calendar data (single call)...');
-    const allEvents = await fetchCalendarEvents(threeMonthsAgo.toISOString(), sevenDaysAhead.toISOString());
+    const allEvents = await fetchCalendarEvents(fetchStart.toISOString(), fetchEnd.toISOString());
 
     // Date boundaries
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -53,6 +53,7 @@ export async function GET() {
     const monthlySalesCalls = monthEvents.filter(isSalesCall);
     const monthlyCancellations = monthEvents.filter(isCancelled);
     const weekSalesCalls = allEvents.filter(e => inRange(e, weekStart, weekEnd)).filter(isSalesCall);
+    const sevenDaysAhead = new Date(now.getTime() + 7 * 86400000);
     const upcomingDemos = allEvents.filter(e => inRange(e, now, sevenDaysAhead)).filter(isSalesCall);
 
     const calls = monthlySalesCalls.map(e => {
