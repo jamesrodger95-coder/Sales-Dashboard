@@ -3,14 +3,16 @@
     {
       "path": "/api/cron/daily-briefing",
       "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/cron/weekly-report",
+      "schedule": "0 9 * * 1"
     }
   ],
   "functions": {
-    "src/app/api/agents/analyst/route.ts": {
-      "maxDuration": 60
-    },
-    "src/app/api/cron/daily-briefing/route.ts": {
-      "maxDuration": 60
-    }
+    "src/app/api/agents/analyst/route.ts": { "maxDuration": 60 },
+    "src/app/api/cron/daily-briefing/route.ts": { "maxDuration": 60 },
+    "src/app/api/cron/weekly-report/route.ts": { "maxDuration": 60 },
+    "src/app/api/reports/weekly/route.ts": { "maxDuration": 60 }
   }
 }
