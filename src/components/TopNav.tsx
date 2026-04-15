@@ -63,8 +63,19 @@ export default function TopNav() {
             })}
           </nav>
 
-          {/* Right: Date + mobile toggle */}
-          <div className="flex items-center gap-4">
+          {/* Right: Jarvis + Date + mobile toggle */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('jarvis:open'))}
+              className="group flex items-center gap-1.5 px-2.5 h-7 rounded-full border border-[#E5E5E5] hover:border-black transition-colors"
+              title="Open Jarvis voice mode (Ctrl+J)"
+            >
+              <span className="relative flex w-1.5 h-1.5">
+                <span className="absolute inset-0 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 animate-ping opacity-60" />
+                <span className="relative rounded-full w-1.5 h-1.5 bg-gradient-to-br from-blue-400 to-purple-500" />
+              </span>
+              <span className="text-[10px] font-semibold tracking-[0.15em] uppercase text-black">Jarvis</span>
+            </button>
             <span className="text-xs text-[#AAAAAA] tabular-nums hidden sm:block">{dateStr}</span>
             <button
               onClick={() => setMobileOpen(!mobileOpen)}

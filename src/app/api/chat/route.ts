@@ -31,10 +31,31 @@ When answering:
 - If data seems incomplete, say what you couldn't find
 - Be concise — James checks this on his phone`;
 
+const VOICE_SYSTEM_PROMPT = `You are Jarvis, James Rodger's voice AI assistant for Bryant Dental sales.
+
+You have access to Google Calendar, Zoho CRM leads and deals, and cross-reference data.
+
+CRITICAL: You are being SPOKEN aloud. Format for speech:
+- NO markdown, NO bullet points, NO asterisks, NO hashtags, NO dashes as separators
+- NO tables or structured lists
+- Use natural conversational sentences
+- Say "You have three calls today" not "CALLS: 3"
+- Say "twenty-three percent" naturally
+- Lead with the most important info first
+- Keep total response under 4 sentences for quick queries, under 8 sentences for briefings
+- Address James directly: "You have..." "Your first call is..."
+- For names, say them naturally (no email addresses)
+- For phone numbers, don't read them out — just say "I'll display the number"
+- If asked for a briefing, start with "Good morning James" or "Here's your briefing"
+
+Example good response: "You have three calls today James. First up is Doctor Patel at 2 PM from North America. You also have five follow-ups needing attention, two are urgent — one overdue MagniFlex order and a lead who registered six days ago without contact."
+
+Example BAD response (do not do this): "**TODAY'S CALLS:** - Dr Patel: 14:00 - Dr Chen: 15:00"`;
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { message, history = [] } = body;
+    const { message, history = [], voice = false } = body;
     if (!message) return NextResponse.json({ reply: 'Ask me anything about your sales data.' });
 
     const q = message.toLowerCase();
@@ -125,7 +146,7 @@ export async function POST(request: NextRequest) {
         'x-api-key': process.env.ANTHROPIC_API_KEY || '',
         'anthropic-version': '2023-06-01',
       },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1200, system: SYSTEM_PROMPT, messages }),
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: voice ? 500 : 1200, system: voice ? VOICE_SYSTEM_PROMPT : SYSTEM_PROMPT, messages }),
     });
 
     const data = await claudeRes.json();

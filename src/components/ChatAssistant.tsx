@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useVoice } from '@/hooks/useVoice';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -23,8 +24,10 @@ export default function ChatAssistant() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { listening, transcript, finalTranscript, supported, speaking, startListening, stopListening, speak, stopSpeaking } = useVoice();
 
   // Keyboard shortcut: Ctrl/Cmd+K
   useEffect(() => {
@@ -39,6 +42,19 @@ export default function ChatAssistant() {
     return () => window.removeEventListener('keydown', handler);
   }, [open]);
 
+  // Load voice preference from localStorage
+  useEffect(() => {
+    const stored = localStorage.getItem('voiceOutputEnabled');
+    if (stored === 'true') setVoiceOutputEnabled(true);
+  }, []);
+
+  const toggleVoiceOutput = () => {
+    const next = !voiceOutputEnabled;
+    setVoiceOutputEnabled(next);
+    localStorage.setItem('voiceOutputEnabled', String(next));
+    if (!next) stopSpeaking();
+  };
+
   // Focus input when opening
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 100);
@@ -49,7 +65,12 @@ export default function ChatAssistant() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const sendMessage = useCallback(async (text: string) => {
+  // Update input with live transcript
+  useEffect(() => {
+    if (listening && transcript) setInput(transcript);
+  }, [listening, transcript]);
+
+  const sendMessage = useCallback(async (text: string, isVoice = false) => {
     if (!text.trim()) return;
     const userMsg: Message = { role: 'user', content: text.trim() };
     setMessages(prev => [...prev, userMsg]);
@@ -63,20 +84,36 @@ export default function ChatAssistant() {
         body: JSON.stringify({
           message: text.trim(),
           history: messages.slice(-8),
+          voice: isVoice || voiceOutputEnabled,
         }),
       });
       const data = await res.json();
-      setMessages(prev => [...prev, { role: 'assistant', content: data.reply || 'No response.' }]);
+      const reply = data.reply || 'No response.';
+      setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+      if (voiceOutputEnabled || isVoice) speak(reply);
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, something went wrong.' }]);
     } finally {
       setLoading(false);
     }
-  }, [messages]);
+  }, [messages, voiceOutputEnabled, speak]);
+
+  // Auto-send when voice input finalizes
+  useEffect(() => {
+    if (finalTranscript && !listening) {
+      sendMessage(finalTranscript, true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finalTranscript, listening]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     sendMessage(input);
+  };
+
+  const toggleMic = () => {
+    if (listening) stopListening();
+    else startListening();
   };
 
   return (
@@ -96,16 +133,38 @@ export default function ChatAssistant() {
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-0 right-0 sm:bottom-6 sm:right-6 w-full sm:w-[420px] h-full sm:h-[540px] bg-[#111] border border-[#1A1A1A] sm:rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden">
+        <div className="fixed bottom-0 right-0 sm:bottom-6 sm:right-6 w-full sm:w-[420px] h-full sm:h-[540px] bg-[#111] border border-[#1A1A1A] sm:rounded-2xl shadow-2xl z-40 flex flex-col overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-[#1A1A1A] flex-shrink-0">
             <div>
               <h3 className="text-sm font-semibold text-white">Sales Assistant</h3>
-              <p className="text-[10px] text-dim">AI-powered · Ctrl+K</p>
+              <p className="text-[10px] text-dim">AI-powered · Ctrl+K · Ctrl+J for Jarvis</p>
             </div>
-            <button onClick={() => setOpen(false)} className="w-7 h-7 flex items-center justify-center rounded-lg text-dim hover:text-white hover:bg-[#1A1A1A] transition-colors">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 3L11 11M11 3L3 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
-            </button>
+            <div className="flex items-center gap-1">
+              {/* Voice output toggle */}
+              <button
+                onClick={toggleVoiceOutput}
+                className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors ${voiceOutputEnabled ? 'text-white bg-[#1A1A1A]' : 'text-dim hover:text-white hover:bg-[#1A1A1A]'}`}
+                title={voiceOutputEnabled ? 'Voice responses on' : 'Voice responses off'}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  {voiceOutputEnabled ? (
+                    <>
+                      <path d="M11 5L6 9H2v6h4l5 4V5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M15.54 8.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </>
+                  ) : (
+                    <>
+                      <path d="M11 5L6 9H2v6h4l5 4V5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M22 9l-6 6M16 9l6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    </>
+                  )}
+                </svg>
+              </button>
+              <button onClick={() => setOpen(false)} className="w-7 h-7 flex items-center justify-center rounded-lg text-dim hover:text-white hover:bg-[#1A1A1A] transition-colors">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 3L11 11M11 3L3 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
+              </button>
+            </div>
           </div>
 
           {/* Messages */}
@@ -113,7 +172,7 @@ export default function ChatAssistant() {
             {messages.length === 0 && (
               <div className="text-center py-8">
                 <p className="text-sm text-muted mb-1">Ask me anything about your sales data</p>
-                <p className="text-[11px] text-dim">I can search leads, check schedules, and analyse your pipeline</p>
+                <p className="text-[11px] text-dim">Type or tap the mic to speak</p>
               </div>
             )}
 
@@ -141,6 +200,14 @@ export default function ChatAssistant() {
               </div>
             )}
 
+            {speaking && (
+              <div className="flex justify-start">
+                <button onClick={stopSpeaking} className="text-[10px] text-dim hover:text-muted transition-colors">
+                  Speaking... tap to stop
+                </button>
+              </div>
+            )}
+
             <div ref={messagesEndRef} />
           </div>
 
@@ -163,14 +230,34 @@ export default function ChatAssistant() {
               type="text"
               value={input}
               onChange={e => setInput(e.target.value)}
-              placeholder="Ask about leads, orders, schedule..."
+              placeholder={listening ? 'Listening...' : 'Ask about leads, orders, schedule...'}
               disabled={loading}
               className="flex-1 bg-[#0A0A0A] border border-[#1A1A1A] rounded-xl px-3 py-2 text-sm text-white placeholder:text-dim outline-none focus:border-[#333] transition-colors disabled:opacity-50"
             />
+            {/* Mic button */}
+            {supported && (
+              <button
+                type="button"
+                onClick={toggleMic}
+                disabled={loading}
+                className={`w-9 h-9 flex items-center justify-center rounded-xl transition-all flex-shrink-0 ${
+                  listening
+                    ? 'bg-danger text-white animate-pulse'
+                    : 'bg-[#1A1A1A] text-muted hover:text-white hover:bg-[#222]'
+                }`}
+                title={listening ? 'Stop listening' : 'Start voice input'}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            )}
+            {/* Send button */}
             <button
               type="submit"
               disabled={loading || !input.trim()}
-              className="w-8 h-8 flex items-center justify-center rounded-xl bg-white text-black hover:bg-white/90 disabled:opacity-30 transition-all flex-shrink-0"
+              className="w-9 h-9 flex items-center justify-center rounded-xl bg-white text-black hover:bg-white/90 disabled:opacity-30 transition-all flex-shrink-0"
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path d="M14 2L7 9M14 2L9.5 14L7 9M14 2L2 6.5L7 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />

@@ -3,6 +3,7 @@ import "./globals.css";
 import TopNav from "@/components/TopNav";
 import SplashScreen from "@/components/SplashScreen";
 import ChatAssistant from "@/components/ChatAssistant";
+import JarvisMode from "@/components/JarvisMode";
 
 export const metadata: Metadata = {
   title: "Bryant Dental — Sales Intelligence",
@@ -23,6 +24,7 @@ export default function RootLayout({
           {children}
         </main>
         <ChatAssistant />
+        <JarvisMode />
       </body>
     </html>
   );
