@@ -2,15 +2,31 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 
-interface CalendarCall {
-  contactName: string;
+type Status = 'ordered' | 'demo_done' | 'no_show' | 'gone_cold' | 'in_pipeline' | 'direct_booking' | 'pending';
+
+interface CallRecord {
+  name: string;
+  email: string;
   phone: string | null;
+  date: string;
   country: string | null;
-  start: string;
-  summary: string;
-  description?: string;
-  attendeeStatus: string;
+  status: Status;
+  stage: string | null;
+  value: number | null;
+  dealName: string | null;
+  platform: string | null;
+  leadSource: string | null;
 }
+
+const STATUS_PILLS: Record<Status, { label: string; color: string; bg: string }> = {
+  ordered:        { label: 'Ordered',     color: 'text-emerald-400', bg: 'bg-emerald-400/10 border-emerald-400/20' },
+  demo_done:      { label: 'Demo Done',   color: 'text-purple-400',  bg: 'bg-purple-400/10 border-purple-400/20' },
+  no_show:        { label: 'No Show',     color: 'text-red-400',     bg: 'bg-red-400/10 border-red-400/20' },
+  gone_cold:      { label: 'No Contact',  color: 'text-orange-400',  bg: 'bg-orange-400/10 border-orange-400/20' },
+  in_pipeline:    { label: 'In Pipeline', color: 'text-blue-400',    bg: 'bg-blue-400/10 border-blue-400/20' },
+  direct_booking: { label: 'Direct',      color: 'text-gray-400',    bg: 'bg-gray-400/10 border-gray-400/20' },
+  pending:        { label: 'Pending',     color: 'text-gray-500',    bg: 'bg-gray-500/10 border-gray-500/20' },
+};
 
 function getMonthOptions() {
   const months = [];
@@ -19,8 +35,8 @@ function getMonthOptions() {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     months.push({
       label: d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
-      start: new Date(d.getFullYear(), d.getMonth(), 1).toISOString(),
-      end: new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59).toISOString(),
+      year: d.getFullYear(),
+      month: d.getMonth(),
     });
   }
   return months;
@@ -29,19 +45,20 @@ function getMonthOptions() {
 export default function CallsPage() {
   const months = useMemo(() => getMonthOptions(), []);
   const [selectedMonth, setSelectedMonth] = useState(0);
-  const [calls, setCalls] = useState<CalendarCall[]>([]);
+  const [calls, setCalls] = useState<CallRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<Status | 'all'>('all');
 
   const loadCalls = useCallback(async () => {
     setLoading(true);
     try {
       const m = months[selectedMonth];
-      const res = await fetch(`/api/calendar?timeMin=${m.start}&timeMax=${m.end}&salesOnly=true`);
+      const res = await fetch(`/api/conversions?year=${m.year}&month=${m.month}`);
       const data = await res.json();
-      setCalls(data.events || []);
+      setCalls(data.records || []);
     } catch {
       setCalls([]);
     } finally {
@@ -53,14 +70,15 @@ export default function CallsPage() {
     loadCalls();
   }, [loadCalls]);
 
-  const filtered = calls.filter(c =>
-    !search || c.contactName?.toLowerCase().includes(search.toLowerCase()) ||
-    c.summary?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = calls.filter(c => {
+    const matchSearch = !search || c.name?.toLowerCase().includes(search.toLowerCase());
+    const matchStatus = statusFilter === 'all' || c.status === statusFilter;
+    return matchSearch && matchStatus;
+  });
 
   const copyToClipboard = () => {
     const text = filtered.map((c, i) =>
-      `${i + 1}. ${c.contactName} | ${c.phone || 'No phone'} | ${new Date(c.start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
+      `${i + 1}. ${c.name} | ${c.phone || 'No phone'} | ${new Date(c.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} | ${c.stage || c.status}`
     ).join('\n');
     const header = `${months[selectedMonth].label} — ${filtered.length} calls\n${'—'.repeat(40)}\n`;
     navigator.clipboard.writeText(header + text);
@@ -88,12 +106,12 @@ export default function CallsPage() {
       </div>
 
       {/* Count + search + export */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
         <div className="flex items-baseline gap-3">
           <span className="text-3xl font-bold text-white tabular-nums">{loading ? '--' : filtered.length}</span>
           <span className="text-sm text-muted">calls</span>
           {!loading && (() => {
-            const uniqueEmails = new Set(filtered.map(c => c.contactName?.toLowerCase()).filter(Boolean));
+            const uniqueEmails = new Set(filtered.map(c => c.email?.toLowerCase()).filter(Boolean));
             return uniqueEmails.size < filtered.length ? (
               <span className="text-xs text-dim">({uniqueEmails.size} unique leads)</span>
             ) : null;
@@ -116,6 +134,36 @@ export default function CallsPage() {
         </div>
       </div>
 
+      {/* Status filter pills */}
+      {!loading && calls.length > 0 && (
+        <div className="flex items-center gap-2 mb-6 overflow-x-auto pb-1">
+          <button
+            onClick={() => setStatusFilter('all')}
+            className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all border ${
+              statusFilter === 'all' ? 'bg-white text-black border-white' : 'text-muted border-subtle hover:text-white hover:border-subtle-hover'
+            }`}
+          >
+            All ({calls.length})
+          </button>
+          {(Object.keys(STATUS_PILLS) as Status[]).map(s => {
+            const count = calls.filter(c => c.status === s).length;
+            if (count === 0) return null;
+            const pill = STATUS_PILLS[s];
+            return (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(statusFilter === s ? 'all' : s)}
+                className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all border ${
+                  statusFilter === s ? `${pill.bg} ${pill.color} border-current` : 'text-muted border-subtle hover:text-white hover:border-subtle-hover'
+                }`}
+              >
+                {pill.label} ({count})
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Table */}
       <div className="rounded-card border border-subtle bg-surface">
         {loading ? (
@@ -136,11 +184,15 @@ export default function CallsPage() {
                 <th className="py-3 text-xs font-medium uppercase tracking-heading text-dim">Name</th>
                 <th className="py-3 text-xs font-medium uppercase tracking-heading text-dim">Phone</th>
                 <th className="py-3 text-xs font-medium uppercase tracking-heading text-dim">Date</th>
-                <th className="py-3 pr-6 text-xs font-medium uppercase tracking-heading text-dim hidden sm:table-cell">Country</th>
+                <th className="py-3 text-xs font-medium uppercase tracking-heading text-dim hidden sm:table-cell">Country</th>
+                <th className="py-3 pr-6 text-xs font-medium uppercase tracking-heading text-dim hidden md:table-cell">CRM Status</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((call, i) => (
+              {filtered.map((call, i) => {
+                const pill = STATUS_PILLS[call.status];
+                const pillLabel = call.stage || pill.label;
+                return (
                 <>
                   <tr
                     key={i}
@@ -150,43 +202,44 @@ export default function CallsPage() {
                     }`}
                   >
                     <td className="py-3 pl-6 pr-2 text-dim tabular-nums">{i + 1}</td>
-                    <td className="py-3 text-white font-medium">{call.contactName}</td>
+                    <td className="py-3 text-white font-medium">{call.name}</td>
                     <td className="py-3 font-mono tabular-nums text-xs">{call.phone ? <a href={`tel:${call.phone.replace(/\s/g, '')}`} className="text-muted hover:text-white transition-colors">{call.phone}</a> : <span className="text-dim">—</span>}</td>
                     <td className="py-3 text-muted">
-                      {new Date(call.start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', weekday: 'short' })}
+                      {new Date(call.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', weekday: 'short' })}
                     </td>
-                    <td className="py-3 pr-6 text-dim hidden sm:table-cell">{call.country || '--'}</td>
+                    <td className="py-3 text-dim hidden sm:table-cell">{call.country || '--'}</td>
+                    <td className="py-3 pr-6 hidden md:table-cell">
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${pill.bg} ${pill.color}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full bg-current`} />
+                        {pillLabel}
+                      </span>
+                    </td>
                   </tr>
                   {expandedRow === i && (
                     <tr key={`detail-${i}`}>
-                      <td colSpan={5} className="px-6 pb-4">
+                      <td colSpan={6} className="px-6 pb-4">
                         <div className="rounded-xl bg-black/30 p-4 text-xs space-y-2">
-                          <p className="text-muted"><span className="text-dim">Event:</span> {call.summary}</p>
-                          <p className="text-muted"><span className="text-dim">Status:</span>{' '}
-                            <span className={`inline-flex items-center gap-1.5 ${
-                              call.attendeeStatus === 'accepted' ? 'text-success' :
-                              call.attendeeStatus === 'declined' ? 'text-danger' :
-                              'text-warning'
-                            }`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${
-                                call.attendeeStatus === 'accepted' ? 'bg-success' :
-                                call.attendeeStatus === 'declined' ? 'bg-danger' :
-                                'bg-warning'
-                              }`} />
-                              {call.attendeeStatus || 'unknown'}
+                          <div className="flex flex-wrap gap-x-6 gap-y-1">
+                            <p className="text-muted"><span className="text-dim">Email:</span> {call.email || '—'}</p>
+                            <p className="text-muted"><span className="text-dim">Platform:</span> {call.platform || '—'}</p>
+                            <p className="text-muted"><span className="text-dim">Source:</span> {call.leadSource || '—'}</p>
+                            {call.value && <p className="text-muted"><span className="text-dim">Value:</span> ${call.value.toLocaleString()}</p>}
+                            {call.dealName && <p className="text-muted"><span className="text-dim">Deal:</span> {call.dealName}</p>}
+                          </div>
+                          {/* CRM pill on mobile (visible below md) */}
+                          <div className="md:hidden mt-2">
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${pill.bg} ${pill.color}`}>
+                              <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                              {pillLabel}
                             </span>
-                          </p>
-                          {call.description && (
-                            <p className="text-muted whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
-                              <span className="text-dim">Notes:</span> {call.description.substring(0, 500)}
-                            </p>
-                          )}
+                          </div>
                         </div>
                       </td>
                     </tr>
                   )}
                 </>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
