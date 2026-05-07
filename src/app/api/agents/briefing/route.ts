@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { fetchCalendarEvents, isSalesCall, getExternalAttendeeName, extractPhone, isCancelled } from '@/lib/google-calendar';
 import { askClaude, AGENT_PROMPTS } from '@/lib/claude-client';
+import { readAll as readAllDebriefs, bucketByDate } from '@/lib/debriefs';
 
 export async function GET() {
   try {
@@ -61,6 +62,18 @@ export async function GET() {
         phone: extractPhone(e),
       }));
 
+    // Debriefs / follow-ups
+    const allDebriefs = await readAllDebriefs();
+    const debriefBuckets = bucketByDate(allDebriefs);
+    const followUpsToday = [...debriefBuckets.overdue, ...debriefBuckets.today].map(d => ({
+      name: d.name,
+      country: d.country,
+      config: [d.frame, d.magnification, d.px ? 'PX' : null, d.headlight, d.outcome].filter(Boolean).join(' · '),
+      notes: d.notes,
+      followUpDate: d.followUpDate,
+      overdueDays: d.followUpDate ? Math.max(0, Math.floor((Date.now() - new Date(d.followUpDate).getTime()) / 86400000)) : 0,
+    }));
+
     const briefingData = {
       date: now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
       callsThisMonth: monthlySalesCalls.length,
@@ -75,6 +88,8 @@ export async function GET() {
       })),
       todaySchedule,
       tomorrowSchedule,
+      followUps: followUpsToday,
+      followUpsCount: followUpsToday.length,
     };
 
     const result = await askClaude(

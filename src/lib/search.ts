@@ -4,6 +4,76 @@
 import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail, extractPhone, extractCountry, extractMeetingNotes, detectBookingPlatform, hasPrepNotes } from './google-calendar';
 import { fetchAllJamesLeads, fetchAllJamesDeals, isZohoConfigured, getDealValue, getLeadPhone, buildEmailMaps, isInMonth } from './zoho-client';
 import { getAttentionNeeded, getManufacturingSummary, getPipelineCounts, getConversionStats } from './data-engine';
+import { readAll as readAllDebriefs, bucketByDate, isOverdue, isDueToday, Debrief } from './debriefs';
+
+// ============================================================
+// DEBRIEFS — call notes from CallDebriefCard / Telegram
+// ============================================================
+
+function fmtDebrief(d: Debrief): string {
+  const cfg = [d.frame, d.magnification, d.px ? 'PX' : null, d.headlight, d.outcome].filter(Boolean).join(' · ');
+  const fu = d.followUpDate ? `Follow-up: ${d.followUpDate}${d.followUpDone ? ' (done)' : ''}` : 'No follow-up';
+  const when = new Date(d.callDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return `  ${d.name} (${when}) — ${cfg}${d.notes ? ` — "${d.notes}"` : ''} | ${fu}`;
+}
+
+export async function searchDebriefs(name: string): Promise<string> {
+  const all = await readAllDebriefs();
+  const tokens = name.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length > 2);
+  if (tokens.length === 0) return '';
+  // Match if ANY token appears in the name — handles "discuss with Meinke" finding "Dr. Meinke"
+  const matches = all.filter(d => {
+    const n = d.name.toLowerCase();
+    return tokens.some(t => n.includes(t));
+  }).sort((a, b) => b.callDate.localeCompare(a.callDate));
+  if (matches.length === 0) return '';
+  const lines = ['CALL NOTES (from your debriefs):'];
+  matches.slice(0, 5).forEach(d => lines.push(fmtDebrief(d)));
+  return lines.join('\n');
+}
+
+export async function getDebriefFollowUpsText(): Promise<string> {
+  const all = await readAllDebriefs();
+  const buckets = bucketByDate(all);
+  const sections: string[] = [];
+  if (buckets.overdue.length) {
+    sections.push(`OVERDUE FROM CALL NOTES (${buckets.overdue.length}):`);
+    buckets.overdue.slice(0, 8).forEach(d => sections.push(fmtDebrief(d)));
+  }
+  if (buckets.today.length) {
+    sections.push(`DUE TODAY FROM CALL NOTES (${buckets.today.length}):`);
+    buckets.today.slice(0, 8).forEach(d => sections.push(fmtDebrief(d)));
+  }
+  if (buckets.thisWeek.length) {
+    sections.push(`THIS WEEK FROM CALL NOTES (${buckets.thisWeek.length}):`);
+    buckets.thisWeek.slice(0, 8).forEach(d => sections.push(fmtDebrief(d)));
+  }
+  if (sections.length === 0) return '';
+  return sections.join('\n');
+}
+
+export async function getDebriefStats(): Promise<string> {
+  const all = await readAllDebriefs();
+  if (all.length === 0) return '';
+  const byOutcome: Record<string, number> = {};
+  const byMag: Record<string, number> = {};
+  let pxYes = 0;
+  for (const d of all) {
+    if (d.outcome) byOutcome[d.outcome] = (byOutcome[d.outcome] || 0) + 1;
+    if (d.magnification) byMag[d.magnification] = (byMag[d.magnification] || 0) + 1;
+    if (d.px) pxYes++;
+  }
+  const overdue = all.filter(d => isOverdue(d)).length;
+  const today = all.filter(d => isDueToday(d)).length;
+  const lines = [
+    `Total debriefs: ${all.length}`,
+    `Outcomes: ${Object.entries(byOutcome).map(([k, v]) => `${k} ${v}`).join(', ')}`,
+    `Magnifications: ${Object.entries(byMag).map(([k, v]) => `${k} ${v}`).join(', ')}`,
+    `PX rate: ${Math.round((pxYes / all.length) * 100)}%`,
+    `Follow-ups: ${today} today, ${overdue} overdue`,
+  ];
+  return lines.join('\n');
+}
 
 // ============================================================
 // DEEP PERSON SEARCH — CRM + Calendar + Deals combined

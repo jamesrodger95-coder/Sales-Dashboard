@@ -9,6 +9,8 @@ import ScheduleList from '@/components/ScheduleList';
 import SyncStatus from '@/components/SyncStatus';
 import BriefingCard from '@/components/BriefingCard';
 import DrillDown from '@/components/DrillDown';
+import CallDebriefCard from '@/components/CallDebriefCard';
+import FollowUpList from '@/components/FollowUpList';
 import { CallRecord, ScheduleItem, AnalyticsData } from '@/lib/types';
 
 type SyncState = 'idle' | 'syncing' | 'synced' | 'error';
@@ -49,6 +51,7 @@ export default function Dashboard() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [followUpRefresh, setFollowUpRefresh] = useState(0);
   const [syncState, setSyncState] = useState<SyncState>('syncing');
   const [lastSynced, setLastSynced] = useState<Date | null>(null);
   const syncedTimer = useRef<NodeJS.Timeout | null>(null);
@@ -160,6 +163,12 @@ export default function Dashboard() {
 
       {/* AI Briefing card */}
       <BriefingCard />
+
+      {/* Debrief + follow-ups */}
+      <div id="follow-ups" className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6 scroll-mt-20">
+        <CallDebriefCard onSaved={() => setFollowUpRefresh(n => n + 1)} />
+        <FollowUpList refreshSignal={followUpRefresh} />
+      </div>
 
       {/* Main content: 55/45 split */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_0.82fr] gap-6 mb-6">

@@ -7,6 +7,7 @@ import {
   getPipelineSummaryText, getManufacturingStatusText, getMonthStats,
   getFollowUpsText, getLeadSourceAnalysis, getBookingPlatformAnalysis,
   getDirectBookingsText, getMonthComparison, getNoShowPatterns,
+  searchDebriefs, getDebriefFollowUpsText, getDebriefStats,
 } from '@/lib/search';
 
 const SYSTEM_PROMPT = `You are James Rodger's sales assistant at Bryant Dental — UK dental MedTech selling the world's lightest loupes and headlights.
@@ -104,7 +105,7 @@ export async function POST(request: NextRequest) {
     try {
       // Person search — detect names or "find/search/status/who is" queries
       const isPersonQuery = /find|search|who is|status of|tell me about|look up|check on/i.test(q);
-      const stopWords = new Set(['find', 'search', 'show', 'me', 'who', 'is', 'the', 'of', 'has', 'did', 'what', 'when', 'where', 'how', 'my', 'all', 'any', 'a', 'an', 'in', 'for', 'to', 'from', 'with', 'about', 'ordered', 'status', 'stage', 'today', 'this', 'month', 'week', 'tell', 'look', 'up', 'check', 'on']);
+      const stopWords = new Set(['find', 'search', 'show', 'me', 'who', 'is', 'the', 'of', 'has', 'did', 'what', 'when', 'where', 'how', 'my', 'all', 'any', 'a', 'an', 'in', 'for', 'to', 'from', 'with', 'about', 'ordered', 'status', 'stage', 'today', 'this', 'month', 'week', 'tell', 'look', 'up', 'check', 'on', 'discuss', 'discussed', 'talk', 'talked', 'said', 'logged', 'note', 'notes', 'debrief']);
       const nameWords = message.split(/\s+/).filter((w: string) => !stopWords.has(w.toLowerCase()) && w.length > 2);
       const nameQuery = nameWords.join(' ');
 
@@ -151,9 +152,23 @@ export async function POST(request: NextRequest) {
         fetches.push(getMonthComparison(now.getFullYear(), now.getMonth(), lm.getFullYear(), lm.getMonth())); labels.push('MONTH COMPARISON');
       }
 
+      // Debrief / call-notes intent
+      if (q.includes('discuss') || q.includes('call notes') || q.includes('debrief') || q.includes('logged') || q.includes('what did i say') || q.includes('what did we talk')) {
+        fetches.push(searchDebriefs(nameQuery || message)); labels.push('CALL NOTES');
+      }
+      // Always include follow-ups + debrief stats for follow-up / outcome queries
+      if (q.includes('follow') || q.includes('chase') || q.includes('outstanding')) {
+        fetches.push(getDebriefFollowUpsText()); labels.push('DEBRIEF FOLLOW-UPS');
+      }
+      if (q.includes('outcome') || q.includes('configuration') || q.includes('px rate') || q.includes('magniflex rate') || q.includes('debrief stats')) {
+        fetches.push(getDebriefStats()); labels.push('DEBRIEF STATS');
+      }
+
       // Person search — if nothing else matched or explicitly requested
       if ((fetches.length === 0 || isPersonQuery) && nameQuery.length > 2) {
         fetches.push(searchPersonDeep(nameQuery)); labels.push(`SEARCH: "${nameQuery}"`);
+        // Also pull any debrief notes for that person
+        fetches.push(searchDebriefs(nameQuery)); labels.push(`CALL NOTES: "${nameQuery}"`);
       }
 
       // Fetch all data in parallel

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
+import NotificationBell from './NotificationBell';
 
 const navItems = [
   { href: '/', label: 'Dashboard' },
@@ -63,8 +64,9 @@ export default function TopNav() {
             })}
           </nav>
 
-          {/* Right: Jarvis + Date + mobile toggle */}
+          {/* Right: Bell + Jarvis + Date + mobile toggle */}
           <div className="flex items-center gap-3">
+            <NotificationBell />
             <button
               onClick={() => window.dispatchEvent(new CustomEvent('jarvis:open'))}
               className="group flex items-center gap-1.5 px-2.5 h-7 rounded-full border border-[#E5E5E5] hover:border-black transition-colors"

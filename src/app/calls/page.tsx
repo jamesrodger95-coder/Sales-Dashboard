@@ -46,6 +46,7 @@ export default function CallsPage() {
   const months = useMemo(() => getMonthOptions(), []);
   const [selectedMonth, setSelectedMonth] = useState(0);
   const [calls, setCalls] = useState<CallRecord[]>([]);
+  const [debriefsByEmail, setDebriefsByEmail] = useState<Record<string, { id: string; frame: string | null; magnification: string | null; px: boolean; headlight: string | null; outcome: string | null; notes: string }>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
@@ -56,14 +57,22 @@ export default function CallsPage() {
     setLoading(true);
     try {
       const m = months[selectedMonth];
-      const res = await fetch(`/api/conversions?year=${m.year}&month=${m.month}`);
-      const data = await res.json();
-      setCalls(data.records || []);
+      const [convRes, debRes] = await Promise.all([
+        fetch(`/api/conversions?year=${m.year}&month=${m.month}`).then(r => r.json()),
+        fetch('/api/debriefs').then(r => r.json()),
+      ]);
+      setCalls(convRes.records || []);
+      const map: typeof debriefsByEmail = {};
+      (debRes.debriefs || []).forEach((d: { email?: string | null; id: string; frame: string | null; magnification: string | null; px: boolean; headlight: string | null; outcome: string | null; notes: string }) => {
+        if (d.email) map[d.email.toLowerCase()] = { id: d.id, frame: d.frame, magnification: d.magnification, px: d.px, headlight: d.headlight, outcome: d.outcome, notes: d.notes };
+      });
+      setDebriefsByEmail(map);
     } catch {
       setCalls([]);
     } finally {
       setLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMonth, months]);
 
   useEffect(() => {
@@ -185,13 +194,15 @@ export default function CallsPage() {
                 <th className="py-3 text-xs font-medium uppercase tracking-heading text-dim">Phone</th>
                 <th className="py-3 text-xs font-medium uppercase tracking-heading text-dim">Date</th>
                 <th className="py-3 text-xs font-medium uppercase tracking-heading text-dim hidden sm:table-cell">Country</th>
-                <th className="py-3 pr-6 text-xs font-medium uppercase tracking-heading text-dim hidden md:table-cell">CRM Status</th>
+                <th className="py-3 text-xs font-medium uppercase tracking-heading text-dim hidden md:table-cell">CRM Status</th>
+                <th className="py-3 pr-6 text-xs font-medium uppercase tracking-heading text-dim hidden md:table-cell">Notes</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((call, i) => {
                 const pill = STATUS_PILLS[call.status];
                 const pillLabel = call.stage || pill.label;
+                const debrief = call.email ? debriefsByEmail[call.email.toLowerCase()] : null;
                 return (
                 <>
                   <tr
@@ -208,16 +219,28 @@ export default function CallsPage() {
                       {new Date(call.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', weekday: 'short' })}
                     </td>
                     <td className="py-3 text-dim hidden sm:table-cell">{call.country || '--'}</td>
-                    <td className="py-3 pr-6 hidden md:table-cell">
+                    <td className="py-3 hidden md:table-cell">
                       <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${pill.bg} ${pill.color}`}>
                         <span className={`w-1.5 h-1.5 rounded-full bg-current`} />
                         {pillLabel}
                       </span>
                     </td>
+                    <td className="py-3 pr-6 hidden md:table-cell">
+                      {debrief ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border bg-emerald-400/10 text-emerald-400 border-emerald-400/20">
+                          <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                          Notes
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border bg-gray-500/10 text-gray-500 border-gray-500/20">
+                          No notes
+                        </span>
+                      )}
+                    </td>
                   </tr>
                   {expandedRow === i && (
                     <tr key={`detail-${i}`}>
-                      <td colSpan={6} className="px-6 pb-4">
+                      <td colSpan={7} className="px-6 pb-4">
                         <div className="rounded-xl bg-black/30 p-4 text-xs space-y-2">
                           <div className="flex flex-wrap gap-x-6 gap-y-1">
                             <p className="text-muted"><span className="text-dim">Email:</span> {call.email || '—'}</p>
@@ -233,6 +256,20 @@ export default function CallsPage() {
                               {pillLabel}
                             </span>
                           </div>
+                          {/* Debrief notes */}
+                          {debrief ? (
+                            <div className="mt-2 pt-2 border-t border-[#1A1A1A]">
+                              <p className="text-[10px] tracking-[0.15em] uppercase text-dim mb-1">Call notes</p>
+                              <p className="text-muted">
+                                {[debrief.frame, debrief.magnification, debrief.px ? 'PX' : null, debrief.headlight, debrief.outcome].filter(Boolean).join(' · ') || '—'}
+                              </p>
+                              {debrief.notes && <p className="text-dim italic mt-1">&ldquo;{debrief.notes}&rdquo;</p>}
+                            </div>
+                          ) : (
+                            <div className="mt-2 pt-2 border-t border-[#1A1A1A]">
+                              <p className="text-dim italic">No debrief logged. Open the dashboard to log this call.</p>
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>
