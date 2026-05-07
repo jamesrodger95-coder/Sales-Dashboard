@@ -36,6 +36,9 @@ export default function CallDebriefCard({ defaultName, defaultEmail, defaultPhon
   const [todayCount, setTodayCount] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [pushToCrm, setPushToCrm] = useState(true);
+  const [crmStatus, setCrmStatus] = useState<'pushed' | 'failed' | 'no_record' | 'skipped' | 'not_configured' | null>(null);
+  const [crmLeadName, setCrmLeadName] = useState<string | null>(null);
 
   // Form state
   const [name, setName] = useState(defaultName || '');
@@ -91,6 +94,7 @@ export default function CallDebriefCard({ defaultName, defaultEmail, defaultPhon
   const save = async () => {
     if (!canSave) return;
     setSaving(true);
+    setCrmStatus(null);
     try {
       const res = await fetch('/api/debriefs', {
         method: 'POST',
@@ -101,13 +105,24 @@ export default function CallDebriefCard({ defaultName, defaultEmail, defaultPhon
           followUpType: followUp || 'No Follow Up',
           followUpCustomDate: followUp === 'Custom' ? customDate : undefined,
           callDate: new Date().toISOString(), source: 'dashboard',
+          pushToCrm,
         }),
       });
       if (!res.ok) throw new Error('save failed');
+      const data = await res.json();
+      setCrmStatus(data.crm?.status || null);
+      setCrmLeadName(data.crm?.leadName || null);
       setSaved(true);
-      reset();
       await refreshCount();
-      setTimeout(() => { setSaved(false); setOpen(false); onSaved?.(); }, 900);
+      onSaved?.();
+      // Show the result for 2.5s, then collapse
+      setTimeout(() => {
+        setSaved(false);
+        setCrmStatus(null);
+        setCrmLeadName(null);
+        reset();
+        setOpen(false);
+      }, 2500);
     } catch {
       alert('Failed to save debrief');
     } finally {
@@ -247,6 +262,20 @@ export default function CallDebriefCard({ defaultName, defaultEmail, defaultPhon
             )}
           </div>
 
+          {/* CRM toggle */}
+          <div className="flex items-center justify-between pt-1">
+            <button
+              type="button"
+              onClick={() => setPushToCrm(p => !p)}
+              className="flex items-center gap-2 group"
+            >
+              <span className={`relative w-9 h-5 rounded-full transition-colors ${pushToCrm ? 'bg-emerald-500' : 'bg-[#1A1A1A]'}`}>
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${pushToCrm ? 'left-[18px] bg-white' : 'left-0.5 bg-[#555]'}`} />
+              </span>
+              <span className="text-xs text-muted group-hover:text-white transition-colors">Add note to CRM</span>
+            </button>
+          </div>
+
           {/* Save */}
           <div className="flex items-center gap-3 pt-1">
             <button
@@ -257,8 +286,24 @@ export default function CallDebriefCard({ defaultName, defaultEmail, defaultPhon
             >
               {saving ? 'Saving...' : saved ? '✓ Saved' : 'Save'}
             </button>
-            {saved && <span className="text-xs text-emerald-400">Logged</span>}
-            {!canSave && <span className="text-xs text-dim">Add a name and pick an outcome to save</span>}
+            {saved && (
+              <div className="flex flex-col">
+                <span className="text-xs text-emerald-400">Saved to dashboard</span>
+                {crmStatus === 'pushed' && (
+                  <span className="text-[11px] text-emerald-400">Note added to CRM{crmLeadName ? ` (${crmLeadName})` : ''}</span>
+                )}
+                {crmStatus === 'failed' && (
+                  <span className="text-[11px] text-amber-400">CRM note failed — saved locally only</span>
+                )}
+                {crmStatus === 'no_record' && (
+                  <span className="text-[11px] text-gray-500">Lead not in CRM — saved locally</span>
+                )}
+                {crmStatus === 'not_configured' && (
+                  <span className="text-[11px] text-gray-500">CRM not configured</span>
+                )}
+              </div>
+            )}
+            {!saved && !canSave && <span className="text-xs text-dim">Add a name and pick an outcome to save</span>}
           </div>
         </div>
       )}

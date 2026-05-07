@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { readAll, create, Debrief, resolveFollowUpDate } from '@/lib/debriefs';
+import { pushDebriefToZoho, CrmPushResult } from '@/lib/debrief-zoho';
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -48,7 +49,24 @@ export async function POST(request: NextRequest) {
       source: body.source || 'dashboard',
     } as Omit<Debrief, 'id' | 'createdAt' | 'reminderSent' | 'followUpDone'>);
 
-    return NextResponse.json({ debrief });
+    // CRM push — non-blocking for the save, but include result in response.
+    // 5-second hard cap so a slow Zoho doesn't keep the user waiting.
+    let crm: CrmPushResult = { status: 'skipped' };
+    if (body.pushToCrm !== false) {
+      try {
+        crm = await Promise.race([
+          pushDebriefToZoho(debrief),
+          new Promise<CrmPushResult>(resolve =>
+            setTimeout(() => resolve({ status: 'failed' }), 5000)
+          ),
+        ]);
+      } catch (err) {
+        console.error('[Debriefs] CRM push threw:', err);
+        crm = { status: 'failed' };
+      }
+    }
+
+    return NextResponse.json({ debrief, crm });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Failed to save debrief';
     return NextResponse.json({ error: msg }, { status: 500 });

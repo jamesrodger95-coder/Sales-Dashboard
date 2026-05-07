@@ -50,6 +50,22 @@ async function zohoFetch(path: string): Promise<Record<string, unknown>> {
   return res.json() as Promise<Record<string, unknown>>;
 }
 
+async function zohoPost(path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const apiDomain = process.env.ZOHO_API_DOMAIN || 'https://www.zohoapis.com';
+  const token = await getAccessToken();
+  const doFetch = (tk: string) => fetch(`${apiDomain}${path}`, {
+    method: 'POST', cache: 'no-store',
+    headers: { 'Authorization': `Zoho-oauthtoken ${tk}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  let res = await doFetch(token);
+  if (res.status === 401) {
+    cachedToken = null; tokenExpiry = 0;
+    res = await doFetch(await getAccessToken());
+  }
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
 // --- Types (verified field names) ---
 
 export interface ZohoLead {
@@ -287,6 +303,52 @@ export function matchEmailToCrm(
   // Not in CRM at all
   if (daysSinceCall <= 30) return { status: 'pending', stage: null, value: null };
   return { status: 'direct_booking', stage: null, value: null };
+}
+
+// --- Lead lookup + Note creation (used by debrief auto-push) ---
+
+export async function searchLeadByEmail(email: string): Promise<ZohoLead | null> {
+  if (!email) return null;
+  try {
+    const data = await zohoFetch(`/crm/v6/Leads/search?email=${encodeURIComponent(email)}&fields=${LEAD_FIELDS}`);
+    const matches = (data.data as ZohoLead[] | undefined) || [];
+    return matches[0] || null;
+  } catch (err) {
+    console.error('[Zoho] searchLeadByEmail failed:', err);
+    return null;
+  }
+}
+
+export async function searchLeadByName(name: string): Promise<ZohoLead | null> {
+  if (!name) return null;
+  try {
+    const criteria = encodeURIComponent(`(Full_Name:equals:${name})`);
+    const data = await zohoFetch(`/crm/v6/Leads/search?criteria=${criteria}&fields=${LEAD_FIELDS}`);
+    const matches = (data.data as ZohoLead[] | undefined) || [];
+    return matches[0] || null;
+  } catch (err) {
+    console.error('[Zoho] searchLeadByName failed:', err);
+    return null;
+  }
+}
+
+export async function addNoteToLead(leadId: string, title: string, content: string): Promise<boolean> {
+  try {
+    const data = await zohoPost(`/crm/v6/Leads/${leadId}/Notes`, {
+      data: [{
+        Note_Title: title,
+        Note_Content: content,
+      }],
+    });
+    type NoteResult = { code?: string; status?: string; message?: string };
+    const results = (data.data as NoteResult[] | undefined) || [];
+    const ok = results.some(r => r.code === 'SUCCESS' || r.status === 'success');
+    if (!ok) console.error('[Zoho] addNoteToLead non-success:', JSON.stringify(data));
+    return ok;
+  } catch (err) {
+    console.error('[Zoho] addNoteToLead failed:', err);
+    return false;
+  }
 }
 
 export function buildEmailMaps(leads: ZohoLead[], deals: ZohoDeal[]): {

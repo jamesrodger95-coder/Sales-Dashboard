@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { readAll, update, create, bucketByDate, resolveFollowUpDate, Debrief } from '@/lib/debriefs';
 import { sendMessage, parseDebriefText } from '@/lib/telegram';
 import { searchPersonDeep, getTodaySchedule } from '@/lib/search';
+import { pushDebriefToZoho } from '@/lib/debrief-zoho';
 
 interface TelegramUpdate {
   message?: {
@@ -113,7 +114,20 @@ async function handleCommand(text: string): Promise<string> {
       followUpType: parsed.followUp || 'No Follow Up',
       source: 'telegram',
     });
-    return `Logged:\n${fmtDebrief(debrief)}\n\nReply <code>edit ${parsed.name}</code> to change anything.`;
+
+    // Best-effort CRM push (5-second cap)
+    let crmLine = '';
+    try {
+      const crm = await Promise.race([
+        pushDebriefToZoho(debrief),
+        new Promise<{ status: 'failed' }>(resolve => setTimeout(() => resolve({ status: 'failed' }), 5000)),
+      ]);
+      if (crm.status === 'pushed') crmLine = `\n\n✓ Note added to ${('leadName' in crm && crm.leadName) || debrief.name}'s CRM record.`;
+      else if (crm.status === 'no_record') crmLine = `\n\nNo CRM record found for ${debrief.name} — saved locally.`;
+      else if (crm.status === 'failed') crmLine = '\n\nCRM note failed — saved locally only.';
+    } catch { /* swallow */ }
+
+    return `Logged:\n${fmtDebrief(debrief)}${crmLine}\n\nReply <code>edit ${parsed.name}</code> to change anything.`;
   }
 
   return 'Sorry, didn\'t recognise that. Try /followups, /today, /find [name], /done [name], or send a free-form debrief.';
