@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import DebriefForm from '@/components/DebriefForm';
 
 type Status = 'ordered' | 'demo_done' | 'no_show' | 'gone_cold' | 'in_pipeline' | 'direct_booking' | 'pending';
 
@@ -52,25 +53,45 @@ export default function CallsPage() {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [statusFilter, setStatusFilter] = useState<Status | 'all'>('all');
+  const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const loadCalls = useCallback(async () => {
     setLoading(true);
+    setError(null);
+    const myId = ++requestIdRef.current;
     try {
       const m = months[selectedMonth];
-      const [convRes, debRes] = await Promise.all([
+      // Run independently — debriefs may not exist on first load and we don't want
+      // a debriefs failure to wipe the calls list (the original "zero" bug).
+      const [convResSettled, debResSettled] = await Promise.allSettled([
         fetch(`/api/conversions?year=${m.year}&month=${m.month}`).then(r => r.json()),
         fetch('/api/debriefs').then(r => r.json()),
       ]);
-      setCalls(convRes.records || []);
+      // Cancellation guard: discard if a newer fetch is in flight
+      if (myId !== requestIdRef.current) return;
+
+      if (convResSettled.status === 'fulfilled' && Array.isArray(convResSettled.value?.records)) {
+        setCalls(convResSettled.value.records);
+      } else {
+        setCalls([]);
+        setError('Could not load calls — calendar/CRM connection may be down.');
+      }
+
       const map: typeof debriefsByEmail = {};
-      (debRes.debriefs || []).forEach((d: { email?: string | null; id: string; frame: string | null; magnification: string | null; px: boolean; headlight: string | null; outcome: string | null; notes: string }) => {
-        if (d.email) map[d.email.toLowerCase()] = { id: d.id, frame: d.frame, magnification: d.magnification, px: d.px, headlight: d.headlight, outcome: d.outcome, notes: d.notes };
-      });
+      if (debResSettled.status === 'fulfilled') {
+        (debResSettled.value.debriefs || []).forEach((d: { email?: string | null; id: string; frame: string | null; magnification: string | null; px: boolean; headlight: string | null; outcome: string | null; notes: string }) => {
+          if (d.email) map[d.email.toLowerCase()] = { id: d.id, frame: d.frame, magnification: d.magnification, px: d.px, headlight: d.headlight, outcome: d.outcome, notes: d.notes };
+        });
+      }
       setDebriefsByEmail(map);
     } catch {
-      setCalls([]);
+      if (myId === requestIdRef.current) {
+        setCalls([]);
+        setError('Could not load calls.');
+      }
     } finally {
-      setLoading(false);
+      if (myId === requestIdRef.current) setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMonth, months]);
@@ -113,6 +134,14 @@ export default function CallsPage() {
           </button>
         ))}
       </div>
+
+      {/* Error banner */}
+      {error && !loading && (
+        <div className="mb-4 px-4 py-2 rounded-xl border border-red-500/30 bg-red-500/10 text-xs text-red-400 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={loadCalls} className="text-red-300 hover:text-white underline">Retry</button>
+        </div>
+      )}
 
       {/* Count + search + export */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
@@ -241,7 +270,7 @@ export default function CallsPage() {
                   {expandedRow === i && (
                     <tr key={`detail-${i}`}>
                       <td colSpan={7} className="px-6 pb-4">
-                        <div className="rounded-xl bg-black/30 p-4 text-xs space-y-2">
+                        <div className="rounded-xl bg-black/30 p-4 text-xs space-y-3">
                           <div className="flex flex-wrap gap-x-6 gap-y-1">
                             <p className="text-muted"><span className="text-dim">Email:</span> {call.email || '—'}</p>
                             <p className="text-muted"><span className="text-dim">Platform:</span> {call.platform || '—'}</p>
@@ -249,25 +278,33 @@ export default function CallsPage() {
                             {call.value && <p className="text-muted"><span className="text-dim">Value:</span> ${call.value.toLocaleString()}</p>}
                             {call.dealName && <p className="text-muted"><span className="text-dim">Deal:</span> {call.dealName}</p>}
                           </div>
-                          {/* CRM pill on mobile (visible below md) */}
-                          <div className="md:hidden mt-2">
+                          <div className="md:hidden">
                             <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${pill.bg} ${pill.color}`}>
                               <span className="w-1.5 h-1.5 rounded-full bg-current" />
                               {pillLabel}
                             </span>
                           </div>
-                          {/* Debrief notes */}
                           {debrief ? (
-                            <div className="mt-2 pt-2 border-t border-[#1A1A1A]">
-                              <p className="text-[10px] tracking-[0.15em] uppercase text-dim mb-1">Call notes</p>
+                            <div className="pt-2 border-t border-[#1A1A1A]">
+                              <p className="text-[10px] tracking-[0.15em] uppercase text-dim mb-1">Call notes logged</p>
                               <p className="text-muted">
                                 {[debrief.frame, debrief.magnification, debrief.px ? 'PX' : null, debrief.headlight, debrief.outcome].filter(Boolean).join(' · ') || '—'}
                               </p>
                               {debrief.notes && <p className="text-dim italic mt-1">&ldquo;{debrief.notes}&rdquo;</p>}
                             </div>
                           ) : (
-                            <div className="mt-2 pt-2 border-t border-[#1A1A1A]">
-                              <p className="text-dim italic">No debrief logged. Open the dashboard to log this call.</p>
+                            <div className="pt-2 border-t border-[#1A1A1A]">
+                              <p className="text-[10px] tracking-[0.15em] uppercase text-dim mb-2">Log debrief</p>
+                              <DebriefForm
+                                defaultName={call.name}
+                                defaultEmail={call.email}
+                                defaultPhone={call.phone}
+                                defaultCountry={call.country}
+                                callDate={call.date}
+                                lockName={true}
+                                compact={true}
+                                onSaved={() => loadCalls()}
+                              />
                             </div>
                           )}
                         </div>

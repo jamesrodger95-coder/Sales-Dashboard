@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import FollowUpList from '@/components/FollowUpList';
 
 interface PipelineStage {
   count: number;
@@ -102,6 +103,11 @@ export default function PipelinePage() {
 
   return (
     <div className="px-5 py-6 max-w-[1400px] mx-auto">
+      {/* Follow-ups from call debriefs */}
+      <div className="mb-6">
+        <FollowUpList />
+      </div>
+
       {/* Month selector */}
       <div className="flex items-center gap-2 mb-6 overflow-x-auto pb-1">
         {months.map((m, i) => (
