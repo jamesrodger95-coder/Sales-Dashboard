@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { readAll, create, Debrief, resolveFollowUpDate } from '@/lib/debriefs';
+import { readAll, create, Debrief, resolveFollowUpDate, storageMode } from '@/lib/debriefs';
 import { pushDebriefToZoho, CrmPushResult } from '@/lib/debrief-zoho';
 
 export async function GET(request: NextRequest) {
@@ -27,26 +27,36 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  let body: Record<string, unknown> = {};
   try {
-    const body = await request.json();
-    const followUpDate = body.followUpDate
-      || resolveFollowUpDate(body.followUpType || 'No Follow Up', body.followUpCustomDate);
+    body = await request.json();
+    console.log('[Debriefs POST]', { storage: storageMode(), name: body.name, outcome: body.outcome, hasEmail: !!body.email });
+
+    if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
+      return NextResponse.json({ error: 'Name is required' }, { status: 400 });
+    }
+
+    const followUpDate = (body.followUpDate as string | undefined)
+      || resolveFollowUpDate(
+        (body.followUpType as Debrief['followUpType']) || 'No Follow Up',
+        body.followUpCustomDate as string | undefined,
+      );
 
     const debrief = await create({
-      name: body.name,
-      email: body.email || null,
-      phone: body.phone || null,
-      country: body.country || null,
-      callDate: body.callDate || new Date().toISOString(),
-      frame: body.frame || null,
-      magnification: body.magnification || null,
+      name: (body.name as string).trim(),
+      email: (body.email as string | null) || null,
+      phone: (body.phone as string | null) || null,
+      country: (body.country as string | null) || null,
+      callDate: (body.callDate as string | undefined) || new Date().toISOString(),
+      frame: (body.frame as Debrief['frame']) || null,
+      magnification: (body.magnification as Debrief['magnification']) || null,
       px: !!body.px,
-      headlight: body.headlight || null,
-      outcome: body.outcome || null,
-      notes: body.notes || '',
+      headlight: (body.headlight as Debrief['headlight']) || null,
+      outcome: (body.outcome as Debrief['outcome']) || null,
+      notes: (body.notes as string) || '',
       followUpDate,
-      followUpType: body.followUpType || 'No Follow Up',
-      source: body.source || 'dashboard',
+      followUpType: (body.followUpType as Debrief['followUpType']) || 'No Follow Up',
+      source: (body.source as Debrief['source']) || 'dashboard',
     } as Omit<Debrief, 'id' | 'createdAt' | 'reminderSent' | 'followUpDone'>);
 
     // CRM push — non-blocking for the save, but include result in response.
@@ -68,7 +78,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ debrief, crm });
   } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Failed to save debrief';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('[Debriefs POST] save failed:', { storage: storageMode(), msg, body });
+    return NextResponse.json(
+      { error: `Save failed: ${msg}`, storage: storageMode() },
+      { status: 500 },
+    );
   }
 }

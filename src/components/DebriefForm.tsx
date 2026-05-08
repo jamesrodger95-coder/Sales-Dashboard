@@ -2,13 +2,13 @@
 
 import { useState, useMemo } from 'react';
 
-type Frame = 'Rounded' | 'Rectangular';
+type Frame = 'Rounded' | 'Rectangular' | 'Not Sure';
 type Magnification = '2.9x' | '3.8x' | '5.7x' | '7.8x' | 'MagniFlex';
 type Headlight = 'Ignis 4 Pro' | 'Ignis 4 Lite' | 'Halo' | 'None';
 type Outcome = 'Ordered' | 'Interested' | 'Thinking' | 'Not Ready' | 'No Answer';
 type FollowUpType = 'Tomorrow' | 'This Week' | 'Next Week' | 'Custom' | 'No Follow Up';
 
-const FRAMES: Frame[] = ['Rounded', 'Rectangular'];
+const FRAMES: Frame[] = ['Rounded', 'Rectangular', 'Not Sure'];
 const MAGS: Magnification[] = ['2.9x', '3.8x', '5.7x', '7.8x', 'MagniFlex'];
 const HEADLIGHTS: Headlight[] = ['Ignis 4 Pro', 'Ignis 4 Lite', 'Halo', 'None'];
 const OUTCOMES: Outcome[] = ['Ordered', 'Interested', 'Thinking', 'Not Ready', 'No Answer'];
@@ -30,15 +30,18 @@ export interface DebriefFormProps {
   compact?: boolean;
 }
 
-interface PillProps { active: boolean; onClick: () => void; children: React.ReactNode }
-function Pill({ active, onClick, children }: PillProps) {
+interface PillProps { active: boolean; onClick: () => void; children: React.ReactNode; tone?: 'primary' | 'neutral' }
+function Pill({ active, onClick, children, tone = 'primary' }: PillProps) {
+  const activeClass = tone === 'neutral'
+    ? 'bg-[#3A3A3A] text-white border-[#3A3A3A]'
+    : 'bg-white text-black border-white';
   return (
     <button
       type="button"
       onClick={onClick}
       className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
         active
-          ? 'bg-white text-black border-white'
+          ? activeClass
           : 'border-[#333] text-gray-400 hover:border-[#444] hover:text-white'
       }`}
     >{children}</button>
@@ -64,6 +67,7 @@ export default function DebriefForm({
   const [pushToCrm, setPushToCrm] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<null | { crm: string; leadName?: string | null }>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const pickPreset = (p: { name: string; email?: string; phone?: string | null; country?: string | null }) => {
     setName(p.name); setEmail(p.email || ''); setPhone(p.phone || ''); setCountry(p.country || '');
@@ -74,6 +78,7 @@ export default function DebriefForm({
   const save = async () => {
     if (!canSave) return;
     setSaving(true);
+    setError(null);
     try {
       const res = await fetch('/api/debriefs', {
         method: 'POST',
@@ -88,12 +93,16 @@ export default function DebriefForm({
           pushToCrm,
         }),
       });
-      if (!res.ok) throw new Error('save failed');
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || `Server returned ${res.status}`);
+      }
       setSaved({ crm: data.crm?.status || 'skipped', leadName: data.crm?.leadName });
       onSaved?.({ id: data.debrief.id, crmStatus: data.crm?.status, leadName: data.crm?.leadName });
-    } catch {
-      alert('Failed to save debrief');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Save failed';
+      setError(msg);
+      console.error('[DebriefForm] save error:', err);
     } finally {
       setSaving(false);
     }
@@ -136,7 +145,14 @@ export default function DebriefForm({
         <div>
           <label className={fieldLabel}>Frame</label>
           <div className="flex flex-wrap gap-1.5">
-            {FRAMES.map(f => <Pill key={f} active={frame === f} onClick={() => setFrame(f)}>{f}</Pill>)}
+            {FRAMES.map(f => (
+              <Pill
+                key={f}
+                active={frame === f}
+                tone={f === 'Not Sure' ? 'neutral' : 'primary'}
+                onClick={() => setFrame(f)}
+              >{f}</Pill>
+            ))}
           </div>
         </div>
         <div>
@@ -246,6 +262,12 @@ export default function DebriefForm({
         )}
         {!saved && !canSave && <span className="text-xs text-dim">Pick a name + outcome to save</span>}
       </div>
+
+      {error && (
+        <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-400">
+          {error}
+        </div>
+      )}
     </div>
   );
 }

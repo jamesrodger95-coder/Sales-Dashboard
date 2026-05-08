@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 
-export type Frame = 'Rounded' | 'Rectangular';
+export type Frame = 'Rounded' | 'Rectangular' | 'Not Sure';
 export type Magnification = '2.9x' | '3.8x' | '5.7x' | '7.8x' | 'MagniFlex';
 export type Headlight = 'Ignis 4 Pro' | 'Ignis 4 Lite' | 'Halo' | 'None';
 export type Outcome = 'Ordered' | 'Interested' | 'Thinking' | 'Not Ready' | 'No Answer';
@@ -31,30 +31,95 @@ export interface Debrief {
   nudgeSent?: boolean;
 }
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DATA_FILE = path.join(DATA_DIR, 'debriefs.json');
+// ============================================================================
+// Storage layer — runtime-aware so dashboard saves work in every environment.
+//
+// Order of preference:
+//   1. Vercel KV (REST API) — durable across deploys; used when KV_REST_API_URL
+//      and KV_REST_API_TOKEN are set.
+//   2. /tmp on Vercel — writable but ephemeral (lost on cold start). Better
+//      than failing every save while waiting on KV setup.
+//   3. ./data/ locally — durable on dev machine.
+// ============================================================================
 
-async function ensureFile() {
-  try { await fs.access(DATA_FILE); }
-  catch {
-    await fs.mkdir(DATA_DIR, { recursive: true });
-    await fs.writeFile(DATA_FILE, '[]', 'utf-8');
+const KV_KEY = 'debriefs:all';
+const hasKV = () => !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+const isVercel = () => !!process.env.VERCEL;
+
+const LOCAL_DIR = path.join(process.cwd(), 'data');
+const LOCAL_FILE = path.join(LOCAL_DIR, 'debriefs.json');
+const TMP_FILE = '/tmp/debriefs.json';
+
+function activeFilePath(): string {
+  return isVercel() ? TMP_FILE : LOCAL_FILE;
+}
+
+async function ensureFile(file: string): Promise<void> {
+  try { await fs.access(file); return; } catch { /* missing */ }
+  const dir = path.dirname(file);
+  try { await fs.mkdir(dir, { recursive: true }); } catch { /* may already exist */ }
+  await fs.writeFile(file, '[]', 'utf-8');
+}
+
+async function kvGetAll(): Promise<Debrief[]> {
+  const url = process.env.KV_REST_API_URL!;
+  const token = process.env.KV_REST_API_TOKEN!;
+  const res = await fetch(`${url}/get/${KV_KEY}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`KV get failed: ${res.status}`);
+  const data = await res.json();
+  if (!data?.result) return [];
+  try { return JSON.parse(data.result) as Debrief[]; }
+  catch { return []; }
+}
+
+async function kvSetAll(items: Debrief[]): Promise<void> {
+  const url = process.env.KV_REST_API_URL!;
+  const token = process.env.KV_REST_API_TOKEN!;
+  const res = await fetch(`${url}/set/${KV_KEY}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(items),
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`KV set failed: ${res.status} ${text}`);
   }
 }
 
 export async function readAll(): Promise<Debrief[]> {
-  await ensureFile();
+  if (hasKV()) {
+    try { return await kvGetAll(); }
+    catch (err) { console.error('[debriefs] KV read failed, falling back to file:', err); }
+  }
+  const file = activeFilePath();
+  await ensureFile(file);
   try {
-    const raw = await fs.readFile(DATA_FILE, 'utf-8');
+    const raw = await fs.readFile(file, 'utf-8');
     return JSON.parse(raw) as Debrief[];
-  } catch {
+  } catch (err) {
+    console.error(`[debriefs] readAll failed for ${file}:`, err);
     return [];
   }
 }
 
 async function writeAll(items: Debrief[]): Promise<void> {
-  await ensureFile();
-  await fs.writeFile(DATA_FILE, JSON.stringify(items, null, 2), 'utf-8');
+  if (hasKV()) {
+    await kvSetAll(items);
+    return;
+  }
+  const file = activeFilePath();
+  await ensureFile(file);
+  await fs.writeFile(file, JSON.stringify(items, null, 2), 'utf-8');
+}
+
+export function storageMode(): 'kv' | 'tmp' | 'local' {
+  if (hasKV()) return 'kv';
+  if (isVercel()) return 'tmp';
+  return 'local';
 }
 
 export async function create(input: Omit<Debrief, 'id' | 'createdAt' | 'reminderSent' | 'followUpDone'>): Promise<Debrief> {

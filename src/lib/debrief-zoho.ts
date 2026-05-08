@@ -51,7 +51,8 @@ export function generateSummary(d: Debrief): string {
 function config(d: Debrief): string {
   const parts: string[] = [];
   if (d.magnification) parts.push(d.magnification);
-  if (d.frame) parts.push(d.frame.toLowerCase());
+  // Skip "Not Sure" frame in the natural-language summary
+  if (d.frame && d.frame !== 'Not Sure') parts.push(d.frame.toLowerCase());
   const headline = parts.join(' ');
 
   const extras: string[] = [];
