@@ -84,7 +84,7 @@ const OUTCOME_PATTERNS: [RegExp, Outcome][] = [
 
 export function parseDebriefText(text: string): {
   frame: Frame | null;
-  magnification: Magnification | null;
+  magnification: Magnification[];
   px: boolean;
   headlight: Headlight | null;
   outcome: Outcome | null;
@@ -95,7 +95,7 @@ export function parseDebriefText(text: string): {
 } {
   const out = {
     frame: null as Frame | null,
-    magnification: null as Magnification | null,
+    magnification: [] as Magnification[],
     px: /\bpx\b|\bprescription\b/i.test(text),
     headlight: null as Headlight | null,
     outcome: null as Outcome | null,
@@ -106,7 +106,13 @@ export function parseDebriefText(text: string): {
   };
 
   for (const [r, v] of FRAME_PATTERNS) if (r.test(text)) { out.frame = v; break; }
-  for (const [r, v] of MAG_PATTERNS) if (r.test(text)) { out.magnification = v; break; }
+  // Collect up to 2 magnifications mentioned in the text — handles "3.8x and magniflex".
+  for (const [r, v] of MAG_PATTERNS) {
+    if (r.test(text) && !out.magnification.includes(v)) {
+      out.magnification.push(v);
+      if (out.magnification.length >= 2) break;
+    }
+  }
   for (const [r, v] of HEADLIGHT_PATTERNS) if (r.test(text)) { out.headlight = v; break; }
   for (const [r, v] of OUTCOME_PATTERNS) if (r.test(text)) { out.outcome = v; break; }
 

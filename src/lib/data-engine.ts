@@ -5,8 +5,13 @@ import {
   fetchAllJamesLeads, fetchAllJamesDeals, isZohoConfigured,
   getDealValue, getLeadPhone, getMfgStatus,
   categorizeLeadStatus,
+  isInMonth,
   ZohoLead, ZohoDeal,
 } from './zoho-client';
+import {
+  CalendarEvent, isSalesCall, isCancelled,
+  getExternalAttendeeEmail, extractLeadName, extractPhone, extractCountry,
+} from './google-calendar';
 
 // ============================================================
 // ATTENTION ITEMS — one function, used everywhere
@@ -216,6 +221,135 @@ export function getConversionStats(
   });
   const showedUp = ordered + demoDone;
   return { ordered, demoDone, showedUp, convRate: showedUp > 0 ? Math.round((ordered / showedUp) * 100) : 0 };
+}
+
+// ============================================================
+// DEMOS COMPLETED — one calculation, used everywhere
+// "Completed in {month}" = calendar past events in month (sales calls only, not cancelled,
+// not no-show in CRM) UNION Zoho leads at VDC with Modified_Time in month. Dedup by email.
+// ============================================================
+
+export interface CompletedDemoItem {
+  name: string;
+  email: string;
+  phone: string | null;
+  date: string;             // ISO; event.start if from calendar, Modified_Time if Zoho-only
+  country: string | null;
+  source: 'calendar' | 'zoho_vdc';
+  status: string | null;    // current Zoho status
+  hasOrder: boolean;        // matched to a Deal (lead converted)
+}
+
+export interface CompletedDemosResult {
+  count: number;
+  items: CompletedDemoItem[];
+  // Intermediate counts for verification logs
+  debug: {
+    calendarTotalInMonth: number;   // all calendar events (any type) in window
+    salesCallsInMonth: number;      // after isSalesCall filter (excludes internal + cancelled)
+    pastSalesCalls: number;         // sales calls whose end < now
+    noShows: number;                // past sales calls dropped because Zoho says No Show
+    cancellations: number;          // events in month filtered out by isCancelled
+    fromCalendar: number;           // count from calendar side after no-show removal
+    fromZohoVDCOnly: number;        // additional from Zoho VDC dedup (not in calendar)
+  };
+}
+
+export function getCompletedDemos(
+  events: CalendarEvent[],
+  leads: ZohoLead[],
+  dealsByEmail: Map<string, ZohoDeal>,
+  year: number,
+  month: number,
+  now: Date = new Date(),
+): CompletedDemosResult {
+  const mStart = new Date(year, month, 1).getTime();
+  const mEnd = new Date(year, month + 1, 0, 23, 59, 59).getTime();
+
+  const leadByEmail = new Map<string, ZohoLead>();
+  leads.forEach(l => { if (l.Email) leadByEmail.set(l.Email.toLowerCase(), l); });
+
+  // Calendar events that started in the month (any status)
+  const inMonth = events.filter(e => {
+    const s = new Date(e.start).getTime();
+    return s >= mStart && s <= mEnd;
+  });
+
+  const cancellations = inMonth.filter(isCancelled).length;
+  const salesCalls = inMonth.filter(isSalesCall);   // excludes cancelled + internal
+  const past = salesCalls.filter(e => new Date(e.end).getTime() < now.getTime());
+
+  let noShows = 0;
+  const completedFromCalendar = past.filter(e => {
+    const email = getExternalAttendeeEmail(e).toLowerCase();
+    if (!email) return true; // no email → can't classify, treat as completed
+    const lead = leadByEmail.get(email);
+    if (lead?.Status === 'No Show') { noShows++; return false; }
+    return true;
+  });
+
+  // Each calendar event = one completed demo (no email dedup here — same person doing two
+  // demos in a month counts as two demos).
+  const items: CompletedDemoItem[] = [];
+  const calendarEmails = new Set<string>();
+
+  for (const e of completedFromCalendar) {
+    const email = getExternalAttendeeEmail(e);
+    const key = email.toLowerCase();
+    if (key) calendarEmails.add(key);
+    const lead = key ? leadByEmail.get(key) : undefined;
+    items.push({
+      name: extractLeadName(e),
+      email,
+      phone: extractPhone(e) || (lead ? getLeadPhone(lead) : null),
+      date: e.start,
+      country: extractCountry(e) || lead?.Country || null,
+      source: 'calendar',
+      status: lead?.Status || null,
+      hasOrder: key ? dealsByEmail.has(key) : false,
+    });
+  }
+
+  // Zoho-only VDC moves: leads at VDC whose Modified_Time fell in month, not already on the
+  // calendar (dedup happens vs calendar emails, not within Zoho VDC — but each lead is one entry).
+  let fromZohoVDCOnly = 0;
+  const zohoAdded = new Set<string>();
+  leads
+    .filter(l => (l.Status === 'Virtual Demo Completed' || l.Status === 'Demo Completed') && isInMonth(l.Modified_Time, year, month))
+    .forEach(l => {
+      const key = (l.Email || '').toLowerCase();
+      if (key && calendarEmails.has(key)) return;     // already counted on calendar
+      if (key && zohoAdded.has(key)) return;          // dedup within zoho side
+      if (key) zohoAdded.add(key);
+      fromZohoVDCOnly++;
+      items.push({
+        name: l.Full_Name,
+        email: l.Email || '',
+        phone: getLeadPhone(l),
+        date: l.Modified_Time,
+        country: l.Country,
+        source: 'zoho_vdc',
+        status: l.Status || null,
+        hasOrder: key ? dealsByEmail.has(key) : false,
+      });
+    });
+
+  // Newest first
+  items.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  return {
+    count: items.length,
+    items,
+    debug: {
+      calendarTotalInMonth: inMonth.length,
+      salesCallsInMonth: salesCalls.length,
+      pastSalesCalls: past.length,
+      noShows,
+      cancellations,
+      fromCalendar: completedFromCalendar.length,
+      fromZohoVDCOnly,
+    },
+  };
 }
 
 // ============================================================

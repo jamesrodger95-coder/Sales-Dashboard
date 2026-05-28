@@ -10,7 +10,7 @@ interface Debrief {
   country: string | null;
   callDate: string;
   frame: string | null;
-  magnification: string | null;
+  magnification: string | string[] | null;
   px: boolean;
   headlight: string | null;
   outcome: string | null;
@@ -51,7 +51,8 @@ function daysOverdue(dateStr: string | null): number {
 function formatConfig(d: Debrief): string {
   const parts: string[] = [];
   if (d.frame) parts.push(d.frame);
-  if (d.magnification) parts.push(d.magnification);
+  const mag = Array.isArray(d.magnification) ? (d.magnification.length ? d.magnification.join(' / ') : null) : d.magnification;
+  if (mag) parts.push(mag);
   if (d.px) parts.push('PX');
   if (d.headlight && d.headlight !== 'None') parts.push(d.headlight);
   if (d.outcome) parts.push(d.outcome);

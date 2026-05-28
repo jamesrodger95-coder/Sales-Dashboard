@@ -22,191 +22,192 @@ function getTimeSlot(hour: number): 'morning' | 'afternoon' | 'late' {
 }
 
 export async function GET() {
+  const now = new Date();
+  const errors: { calendar?: string; zoho?: string } = {};
+
+  // Single fetch: start of 3 months ago to end of current month — covers dashboard + analytics
+  const fetchStart = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+  const fetchEnd = new Date(now.getFullYear(), now.getMonth() + 1, 7, 23, 59, 59);
+
+  // ---- Calendar (independent — failure does not blank the page) ----
+  let allEvents: CalendarEvent[] = [];
   try {
-    const now = new Date();
-
-    // Single fetch: start of 3 months ago to end of current month — covers dashboard + analytics
-    const fetchStart = new Date(now.getFullYear(), now.getMonth() - 3, 1); // 1st of 3 months ago
-    const fetchEnd = new Date(now.getFullYear(), now.getMonth() + 1, 7, 23, 59, 59); // 7 days into next month
-
-    console.log('[Dashboard] Fetching calendar data (single call)...');
-    const allEvents = await fetchCalendarEvents(fetchStart.toISOString(), fetchEnd.toISOString());
-
-    // Date boundaries
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const todayEnd = new Date(todayStart.getTime() + 86400000);
-    const tomorrowEnd = new Date(todayEnd.getTime() + 86400000);
-    const weekStart = new Date(now);
-    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
-    weekStart.setHours(0, 0, 0, 0);
-    const weekEnd = new Date(weekStart.getTime() + 7 * 86400000);
-
-    const inRange = (e: CalendarEvent, start: Date, end: Date) => {
-      const d = new Date(e.start);
-      return d >= start && d < end;
-    };
-
-    // === DASHBOARD DATA ===
-    const monthEvents = allEvents.filter(e => inRange(e, monthStart, monthEnd));
-    const monthlySalesCalls = monthEvents.filter(isSalesCall);
-    const monthlyCancellations = monthEvents.filter(isCancelled);
-    const weekSalesCalls = allEvents.filter(e => inRange(e, weekStart, weekEnd)).filter(isSalesCall);
-    const sevenDaysAhead = new Date(now.getTime() + 7 * 86400000);
-    const upcomingDemos = allEvents.filter(e => inRange(e, now, sevenDaysAhead)).filter(isSalesCall);
-
-    const calls = monthlySalesCalls.map(e => {
-      const country = extractCountry(e);
-      const city = extractCity(e);
-      return {
-        name: extractLeadName(e),
-        email: getExternalAttendeeEmail(e),
-        phone: extractPhone(e),
-        date: e.start,
-        country: [country, city].filter(Boolean).join(', ') || null,
-        eventTitle: e.summary,
-        platform: detectBookingPlatform(e),
-      };
-    });
-
-
-    const buildScheduleItem = (e: CalendarEvent) => {
-      const n = extractMeetingNotes(e);
-      return {
-        time: new Date(e.start).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London' }),
-        name: extractLeadName(e),
-        email: getExternalAttendeeEmail(e),
-        phone: extractPhone(e),
-        type: 'demo',
-        location: [n.country, n.city].filter(Boolean).join(', ') || null,
-        notes: n.notes || null,
-        attendanceConfirmed: n.attendanceConfirmed ?? null,
-        rescheduleReason: n.rescheduleReason || null,
-      };
-    };
-
-    const todaySchedule = allEvents.filter(e => inRange(e, todayStart, todayEnd)).filter(isSalesCall).map(buildScheduleItem);
-    const tomorrowSchedule = allEvents.filter(e => inRange(e, todayEnd, tomorrowEnd)).filter(isSalesCall).map(buildScheduleItem);
-
-    // === ANALYTICS DATA (computed from same events, no extra API calls) ===
-    const salesCalls = allEvents.filter(isSalesCall);
-    const cancelled = allEvents.filter(isCancelled);
-
-    // All 3-month calls for drill-down
-    const allCalls3m = salesCalls.map(e => ({
-      name: extractLeadName(e), phone: extractPhone(e), email: getExternalAttendeeEmail(e),
-      date: e.start, country: extractCountry(e),
-    }));
-
-    // Weekly volume
-    const weekMap = new Map<string, { calls: number; isCurrent: boolean }>();
-    for (let i = 13; i >= 0; i--) {
-      const weekDate = new Date(now.getTime() - i * 7 * 86400000);
-      const label = getWeekRange(weekDate);
-      if (!weekMap.has(label)) weekMap.set(label, { calls: 0, isCurrent: i === 0 });
-    }
-    for (const event of salesCalls) {
-      const label = getWeekRange(new Date(event.start));
-      if (weekMap.has(label)) weekMap.get(label)!.calls++;
-    }
-    const weeklyVolume = Array.from(weekMap.entries()).map(([week, data]) => ({
-      week, calls: data.calls, isCurrent: data.isCurrent,
-    }));
-
-    // Day breakdown
-    const dayBreakdown: Record<string, number> = { Monday: 0, Tuesday: 0, Wednesday: 0, Thursday: 0, Friday: 0, Saturday: 0, Sunday: 0 };
-    for (const event of salesCalls) {
-      const day = new Date(event.start).toLocaleDateString('en-GB', { weekday: 'long' });
-      if (day in dayBreakdown) dayBreakdown[day]++;
-    }
-
-    // Time slots
-    const timeSlots = { morning: 0, afternoon: 0, late: 0 };
-    for (const event of salesCalls) {
-      timeSlots[getTimeSlot(new Date(event.start).getHours())]++;
-    }
-
-    // Monthly comparison
-    const monthlyComparison: { month: string; calls: number; isCurrent: boolean }[] = [];
-    for (let i = 3; i >= 0; i--) {
-      const mDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const mEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59);
-      const label = mDate.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
-      const count = salesCalls.filter(e => { const d = new Date(e.start); return d >= mDate && d <= mEnd; }).length;
-      monthlyComparison.push({ month: label, calls: count, isCurrent: i === 0 });
-    }
-
-    const busiestDay = Object.entries(dayBreakdown).sort(([, a], [, b]) => b - a)[0]?.[0] || 'N/A';
-    const timeLabels = { morning: 'Morning (8-12)', afternoon: 'Afternoon (12-4)', late: 'Late (4-6)' };
-    const busiestTime = Object.entries(timeSlots).sort(([, a], [, b]) => b - a)[0]?.[0] as keyof typeof timeLabels || 'morning';
-
-    console.log(`[Dashboard] Sales calls: ${monthlySalesCalls.length}, Total 3mo: ${salesCalls.length}, Today: ${todaySchedule.length}, Tomorrow: ${tomorrowSchedule.length}`);
-
-    // Zoho CRM data (non-blocking) — uses shared data engine for consistency
-    let zoho = null;
-    try {
-      const { isZohoConfigured, fetchAllJamesDeals, fetchAllJamesLeads, buildEmailMaps } = await import('@/lib/zoho-client');
-      const { getAttentionNeeded, getPipelineCounts, getConversionStats, getManufacturingSummary } = await import('@/lib/data-engine');
-      if (isZohoConfigured()) {
-        const [leads, deals] = await Promise.all([fetchAllJamesLeads(), fetchAllJamesDeals()]);
-        const { leadsByEmail, dealsByEmail } = buildEmailMaps(leads, deals);
-
-        // Shared functions — same logic everywhere
-        const pipeline = getPipelineCounts(leads, deals);
-        const attention = getAttentionNeeded(leads, deals);
-        const calEmails = monthlySalesCalls.map(e => ({ email: getExternalAttendeeEmail(e) }));
-        const conv = getConversionStats(calEmails, leadsByEmail, dealsByEmail);
-        const mfg = getManufacturingSummary(deals);
-
-        const ordersThisMonth = deals.filter(d => {
-          const created = new Date(d.Created_Time);
-          return created >= monthStart && created <= monthEnd;
-        }).length;
-
-        zoho = {
-          connected: true,
-          totalLeads: leads.length,
-          totalDeals: deals.length,
-          totalValue: Math.round(pipeline.activePipelineValue),
-          activeLeads: pipeline.activeLeads,
-          conversionRate: conv.convRate,
-          convRateDetail: `${conv.ordered} from ${conv.showedUp} demos`,
-          followUpsNeeded: attention.length,
-          leadSummary: pipeline.leadStages,
-          dealSummary: pipeline.dealStages,
-          manufacturing: { total: mfg.total, onTrack: mfg.onTrack, approaching: mfg.approaching, overdue: mfg.overdue },
-          ordersThisMonth,
-        };
-        console.log(`[Dashboard] Zoho: ${leads.length} leads, ${deals.length} deals, $${Math.round(pipeline.activePipelineValue)} active, ${conv.convRate}% conversion, ${attention.length} attention items`);
-      }
-    } catch (zohoErr) {
-      console.error('[Dashboard] Zoho error (non-fatal):', zohoErr);
-    }
-
-    return NextResponse.json({
-      kpis: {
-        callsThisMonth: monthlySalesCalls.length,
-        demosThisWeek: weekSalesCalls.length,
-        cancellations: monthlyCancellations.length,
-        upcomingDemos: upcomingDemos.length,
-      },
-      calls,
-      allCalls3m,
-      todaySchedule,
-      tomorrowSchedule,
-      month: now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
-      analytics: {
-        weeklyVolume, dayBreakdown, timeSlots, monthlyComparison,
-        busiestDay, busiestTime: timeLabels[busiestTime],
-        totalCancellations: cancelled.length,
-        totalCalls: salesCalls.length,
-      },
-      zoho,
-    });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Dashboard data failed';
-    console.error('[Dashboard] Error:', error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.log('[Dashboard] Fetching calendar data...');
+    allEvents = await fetchCalendarEvents(fetchStart.toISOString(), fetchEnd.toISOString());
+  } catch (calErr: unknown) {
+    const msg = calErr instanceof Error ? calErr.message : String(calErr);
+    console.error('[Dashboard] Calendar fetch failed:', msg);
+    errors.calendar = msg;
   }
+
+  // Date boundaries
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayEnd = new Date(todayStart.getTime() + 86400000);
+  const tomorrowEnd = new Date(todayEnd.getTime() + 86400000);
+  const weekStart = new Date(now);
+  weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
+  weekStart.setHours(0, 0, 0, 0);
+  const weekEnd = new Date(weekStart.getTime() + 7 * 86400000);
+
+  const inRange = (e: CalendarEvent, start: Date, end: Date) => {
+    const d = new Date(e.start);
+    return d >= start && d < end;
+  };
+
+  // === DASHBOARD DATA ===
+  const monthEvents = allEvents.filter(e => inRange(e, monthStart, monthEnd));
+  const monthlySalesCalls = monthEvents.filter(isSalesCall);
+  const monthlyCancellations = monthEvents.filter(isCancelled);
+  const weekSalesCalls = allEvents.filter(e => inRange(e, weekStart, weekEnd)).filter(isSalesCall);
+  const sevenDaysAhead = new Date(now.getTime() + 7 * 86400000);
+  const upcomingDemos = allEvents.filter(e => inRange(e, now, sevenDaysAhead)).filter(isSalesCall);
+
+  const calls = monthlySalesCalls.map(e => {
+    const country = extractCountry(e);
+    const city = extractCity(e);
+    return {
+      name: extractLeadName(e),
+      email: getExternalAttendeeEmail(e),
+      phone: extractPhone(e),
+      date: e.start,
+      country: [country, city].filter(Boolean).join(', ') || null,
+      eventTitle: e.summary,
+      platform: detectBookingPlatform(e),
+    };
+  });
+
+  const buildScheduleItem = (e: CalendarEvent) => {
+    const n = extractMeetingNotes(e);
+    return {
+      time: new Date(e.start).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London' }),
+      name: extractLeadName(e),
+      email: getExternalAttendeeEmail(e),
+      phone: extractPhone(e),
+      type: 'demo',
+      location: [n.country, n.city].filter(Boolean).join(', ') || null,
+      notes: n.notes || null,
+      attendanceConfirmed: n.attendanceConfirmed ?? null,
+      rescheduleReason: n.rescheduleReason || null,
+    };
+  };
+
+  const todaySchedule = allEvents.filter(e => inRange(e, todayStart, todayEnd)).filter(isSalesCall).map(buildScheduleItem);
+  const tomorrowSchedule = allEvents.filter(e => inRange(e, todayEnd, tomorrowEnd)).filter(isSalesCall).map(buildScheduleItem);
+
+  // === ANALYTICS DATA (computed from same events) ===
+  const salesCalls = allEvents.filter(isSalesCall);
+  const cancelled = allEvents.filter(isCancelled);
+
+  const allCalls3m = salesCalls.map(e => ({
+    name: extractLeadName(e), phone: extractPhone(e), email: getExternalAttendeeEmail(e),
+    date: e.start, country: extractCountry(e),
+  }));
+
+  const weekMap = new Map<string, { calls: number; isCurrent: boolean }>();
+  for (let i = 13; i >= 0; i--) {
+    const weekDate = new Date(now.getTime() - i * 7 * 86400000);
+    const label = getWeekRange(weekDate);
+    if (!weekMap.has(label)) weekMap.set(label, { calls: 0, isCurrent: i === 0 });
+  }
+  for (const event of salesCalls) {
+    const label = getWeekRange(new Date(event.start));
+    if (weekMap.has(label)) weekMap.get(label)!.calls++;
+  }
+  const weeklyVolume = Array.from(weekMap.entries()).map(([week, data]) => ({
+    week, calls: data.calls, isCurrent: data.isCurrent,
+  }));
+
+  const dayBreakdown: Record<string, number> = { Monday: 0, Tuesday: 0, Wednesday: 0, Thursday: 0, Friday: 0, Saturday: 0, Sunday: 0 };
+  for (const event of salesCalls) {
+    const day = new Date(event.start).toLocaleDateString('en-GB', { weekday: 'long' });
+    if (day in dayBreakdown) dayBreakdown[day]++;
+  }
+
+  const timeSlots = { morning: 0, afternoon: 0, late: 0 };
+  for (const event of salesCalls) {
+    timeSlots[getTimeSlot(new Date(event.start).getHours())]++;
+  }
+
+  const monthlyComparison: { month: string; calls: number; isCurrent: boolean }[] = [];
+  for (let i = 3; i >= 0; i--) {
+    const mDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const mEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59);
+    const label = mDate.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+    const count = salesCalls.filter(e => { const d = new Date(e.start); return d >= mDate && d <= mEnd; }).length;
+    monthlyComparison.push({ month: label, calls: count, isCurrent: i === 0 });
+  }
+
+  const busiestDay = Object.entries(dayBreakdown).sort(([, a], [, b]) => b - a)[0]?.[0] || 'N/A';
+  const timeLabels = { morning: 'Morning (8-12)', afternoon: 'Afternoon (12-4)', late: 'Late (4-6)' };
+  const busiestTime = Object.entries(timeSlots).sort(([, a], [, b]) => b - a)[0]?.[0] as keyof typeof timeLabels || 'morning';
+
+  console.log(`[Dashboard] Sales calls: ${monthlySalesCalls.length}, Total 3mo: ${salesCalls.length}, Today: ${todaySchedule.length}, Tomorrow: ${tomorrowSchedule.length}`);
+
+  // ---- Zoho (independent — already non-blocking) ----
+  let zoho = null;
+  try {
+    const { isZohoConfigured, fetchAllJamesDeals, fetchAllJamesLeads, buildEmailMaps } = await import('@/lib/zoho-client');
+    const { getAttentionNeeded, getPipelineCounts, getConversionStats, getManufacturingSummary } = await import('@/lib/data-engine');
+    if (isZohoConfigured()) {
+      const [leads, deals] = await Promise.all([fetchAllJamesLeads(), fetchAllJamesDeals()]);
+      const { leadsByEmail, dealsByEmail } = buildEmailMaps(leads, deals);
+
+      const pipeline = getPipelineCounts(leads, deals);
+      const attention = getAttentionNeeded(leads, deals);
+      const calEmails = monthlySalesCalls.map(e => ({ email: getExternalAttendeeEmail(e) }));
+      const conv = getConversionStats(calEmails, leadsByEmail, dealsByEmail);
+      const mfg = getManufacturingSummary(deals);
+
+      const ordersThisMonth = deals.filter(d => {
+        const created = new Date(d.Created_Time);
+        return created >= monthStart && created <= monthEnd;
+      }).length;
+
+      zoho = {
+        connected: true,
+        totalLeads: leads.length,
+        totalDeals: deals.length,
+        totalValue: Math.round(pipeline.activePipelineValue),
+        activeLeads: pipeline.activeLeads,
+        conversionRate: conv.convRate,
+        convRateDetail: `${conv.ordered} from ${conv.showedUp} demos`,
+        followUpsNeeded: attention.length,
+        leadSummary: pipeline.leadStages,
+        dealSummary: pipeline.dealStages,
+        manufacturing: { total: mfg.total, onTrack: mfg.onTrack, approaching: mfg.approaching, overdue: mfg.overdue },
+        ordersThisMonth,
+      };
+      console.log(`[Dashboard] Zoho: ${leads.length} leads, ${deals.length} deals, $${Math.round(pipeline.activePipelineValue)} active, ${conv.convRate}% conversion, ${attention.length} attention items`);
+    } else {
+      errors.zoho = 'Not configured (missing ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REFRESH_TOKEN)';
+    }
+  } catch (zohoErr: unknown) {
+    const msg = zohoErr instanceof Error ? zohoErr.message : String(zohoErr);
+    console.error('[Dashboard] Zoho fetch failed:', msg);
+    errors.zoho = msg;
+  }
+
+  return NextResponse.json({
+    kpis: {
+      callsThisMonth: monthlySalesCalls.length,
+      demosThisWeek: weekSalesCalls.length,
+      cancellations: monthlyCancellations.length,
+      upcomingDemos: upcomingDemos.length,
+    },
+    calls,
+    allCalls3m,
+    todaySchedule,
+    tomorrowSchedule,
+    month: now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
+    analytics: {
+      weeklyVolume, dayBreakdown, timeSlots, monthlyComparison,
+      busiestDay, busiestTime: timeLabels[busiestTime],
+      totalCancellations: cancelled.length,
+      totalCalls: salesCalls.length,
+    },
+    zoho,
+    errors: Object.keys(errors).length ? errors : undefined,
+  });
 }

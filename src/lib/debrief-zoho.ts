@@ -1,4 +1,4 @@
-import { Debrief } from './debriefs';
+import { Debrief, magsOf } from './debriefs';
 import { isZohoConfigured, searchLeadByEmail, searchLeadByName, addNoteToLead } from './zoho-client';
 
 export type CrmPushStatus = 'pushed' | 'failed' | 'no_record' | 'skipped' | 'not_configured';
@@ -49,8 +49,10 @@ export function generateSummary(d: Debrief): string {
 }
 
 function config(d: Debrief): string {
+  const mags = magsOf(d);
+  const magsPhrase = mags.length > 1 ? mags.join(' and ') : (mags[0] || '');
   const parts: string[] = [];
-  if (d.magnification) parts.push(d.magnification);
+  if (magsPhrase) parts.push(magsPhrase);
   // Skip "Not Sure" frame in the natural-language summary
   if (d.frame && d.frame !== 'Not Sure') parts.push(d.frame.toLowerCase());
   const headline = parts.join(' ');
@@ -58,7 +60,7 @@ function config(d: Debrief): string {
   const extras: string[] = [];
   if (d.px) extras.push('PX');
   if (d.headlight && d.headlight !== 'None') extras.push(d.headlight);
-  if (d.headlight === 'None' && (d.frame || d.magnification)) extras.push('no headlight');
+  if (d.headlight === 'None' && (d.frame || mags.length > 0)) extras.push('no headlight');
 
   if (!headline && extras.length === 0) return '';
   if (!headline) return `with ${extras.join(' and ')}`;

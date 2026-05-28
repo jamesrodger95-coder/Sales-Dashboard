@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 import { NextRequest, NextResponse } from 'next/server';
-import { readAll, update, create, bucketByDate, resolveFollowUpDate, Debrief } from '@/lib/debriefs';
+import { readAll, update, create, bucketByDate, resolveFollowUpDate, magsJoin, Debrief } from '@/lib/debriefs';
 import { sendMessage, parseDebriefText } from '@/lib/telegram';
 import { searchPersonDeep, getTodaySchedule } from '@/lib/search';
 import { pushDebriefToZoho } from '@/lib/debrief-zoho';
@@ -16,7 +16,7 @@ interface TelegramUpdate {
 }
 
 function fmtDebrief(d: Debrief): string {
-  const cfg = [d.frame, d.magnification, d.px ? 'PX' : null, d.headlight, d.outcome].filter(Boolean).join(' · ');
+  const cfg = [d.frame, magsJoin(d) || null, d.px ? 'PX' : null, d.headlight, d.outcome].filter(Boolean).join(' · ');
   const note = d.notes ? `\n  "${d.notes}"` : '';
   const fu = d.followUpDate ? `\n  Follow-up: ${d.followUpDate}${d.followUpDone ? ' (done)' : ''}` : '';
   return `<b>${d.name}</b>${d.country ? ` — ${d.country}` : ''}\n${cfg}${note}${fu}`;
@@ -37,12 +37,12 @@ async function handleCommand(text: string): Promise<string> {
     const lines: string[] = [];
     if (buckets.overdue.length) {
       lines.push(`<b>OVERDUE (${buckets.overdue.length}):</b>`);
-      buckets.overdue.forEach(d => lines.push(`• ${d.name} — ${[d.magnification, d.outcome].filter(Boolean).join(', ')}${d.notes ? ` — "${d.notes}"` : ''}`));
+      buckets.overdue.forEach(d => lines.push(`• ${d.name} — ${[magsJoin(d) || null, d.outcome].filter(Boolean).join(', ')}${d.notes ? ` — "${d.notes}"` : ''}`));
     }
     if (buckets.today.length) {
       if (lines.length) lines.push('');
       lines.push(`<b>TODAY (${buckets.today.length}):</b>`);
-      buckets.today.forEach(d => lines.push(`• ${d.name} — ${[d.magnification, d.outcome].filter(Boolean).join(', ')}${d.notes ? ` — "${d.notes}"` : ''}`));
+      buckets.today.forEach(d => lines.push(`• ${d.name} — ${[magsJoin(d) || null, d.outcome].filter(Boolean).join(', ')}${d.notes ? ` — "${d.notes}"` : ''}`));
     }
     return lines.join('\n');
   }
@@ -97,7 +97,7 @@ async function handleCommand(text: string): Promise<string> {
 
   // Otherwise: try free-form debrief parsing
   const parsed = parseDebriefText(t);
-  if (parsed.frame || parsed.magnification || parsed.headlight || parsed.outcome) {
+  if (parsed.frame || parsed.magnification.length > 0 || parsed.headlight || parsed.outcome) {
     // Ambiguous: ask for confirmation by saving immediately and reporting back
     const followUpDate = parsed.followUpDate || (parsed.followUp ? resolveFollowUpDate(parsed.followUp) : null);
     const debrief = await create({

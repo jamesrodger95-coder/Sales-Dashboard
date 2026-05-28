@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { fetchCalendarEvents, isSalesCall, getExternalAttendeeName, extractPhone, isCancelled } from '@/lib/google-calendar';
 import { askClaude, AGENT_PROMPTS } from '@/lib/claude-client';
-import { readAll as readAllDebriefs, bucketByDate } from '@/lib/debriefs';
+import { readAll as readAllDebriefs, bucketByDate, magsJoin } from '@/lib/debriefs';
 
 export async function GET() {
   try {
@@ -68,7 +68,7 @@ export async function GET() {
     const followUpsToday = [...debriefBuckets.overdue, ...debriefBuckets.today].map(d => ({
       name: d.name,
       country: d.country,
-      config: [d.frame, d.magnification, d.px ? 'PX' : null, d.headlight, d.outcome].filter(Boolean).join(' · '),
+      config: [d.frame, magsJoin(d) || null, d.px ? 'PX' : null, d.headlight, d.outcome].filter(Boolean).join(' · '),
       notes: d.notes,
       followUpDate: d.followUpDate,
       overdueDays: d.followUpDate ? Math.max(0, Math.floor((Date.now() - new Date(d.followUpDate).getTime()) / 86400000)) : 0,

@@ -4,14 +4,14 @@
 import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail, extractPhone, extractCountry, extractMeetingNotes, detectBookingPlatform, hasPrepNotes } from './google-calendar';
 import { fetchAllJamesLeads, fetchAllJamesDeals, isZohoConfigured, getDealValue, getLeadPhone, buildEmailMaps, isInMonth } from './zoho-client';
 import { getAttentionNeeded, getManufacturingSummary, getPipelineCounts, getConversionStats } from './data-engine';
-import { readAll as readAllDebriefs, bucketByDate, isOverdue, isDueToday, Debrief } from './debriefs';
+import { readAll as readAllDebriefs, bucketByDate, isOverdue, isDueToday, magsOf, magsJoin, Debrief } from './debriefs';
 
 // ============================================================
 // DEBRIEFS — call notes from CallDebriefCard / Telegram
 // ============================================================
 
 function fmtDebrief(d: Debrief): string {
-  const cfg = [d.frame, d.magnification, d.px ? 'PX' : null, d.headlight, d.outcome].filter(Boolean).join(' · ');
+  const cfg = [d.frame, magsJoin(d) || null, d.px ? 'PX' : null, d.headlight, d.outcome].filter(Boolean).join(' · ');
   const fu = d.followUpDate ? `Follow-up: ${d.followUpDate}${d.followUpDone ? ' (done)' : ''}` : 'No follow-up';
   const when = new Date(d.callDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
   return `  ${d.name} (${when}) — ${cfg}${d.notes ? ` — "${d.notes}"` : ''} | ${fu}`;
@@ -60,7 +60,11 @@ export async function getDebriefStats(): Promise<string> {
   let pxYes = 0;
   for (const d of all) {
     if (d.outcome) byOutcome[d.outcome] = (byOutcome[d.outcome] || 0) + 1;
-    if (d.magnification) byMag[d.magnification] = (byMag[d.magnification] || 0) + 1;
+    // Count each magnification mentioned — someone interested in 3.8x AND MagniFlex
+    // adds 1 to both buckets, per the spec.
+    for (const mag of magsOf(d)) {
+      byMag[mag] = (byMag[mag] || 0) + 1;
+    }
     if (d.px) pxYes++;
   }
   const overdue = all.filter(d => isOverdue(d)).length;

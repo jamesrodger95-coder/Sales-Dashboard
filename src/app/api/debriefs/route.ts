@@ -1,8 +1,22 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { readAll, create, Debrief, resolveFollowUpDate, storageMode } from '@/lib/debriefs';
+import { readAll, create, Debrief, Magnification, resolveFollowUpDate, storageMode } from '@/lib/debriefs';
 import { pushDebriefToZoho, CrmPushResult } from '@/lib/debrief-zoho';
+
+// Accept array, string (legacy), or null. Cap at 2; ignore unknown values.
+function normalizeMags(input: unknown): Magnification[] {
+  const valid: Magnification[] = ['2.9x', '3.8x', '5.7x', '7.8x', 'MagniFlex'];
+  const items = Array.isArray(input) ? input : (input ? [input] : []);
+  const out: Magnification[] = [];
+  for (const m of items) {
+    if (typeof m === 'string' && (valid as string[]).includes(m) && !out.includes(m as Magnification)) {
+      out.push(m as Magnification);
+    }
+    if (out.length >= 2) break;
+  }
+  return out;
+}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -49,7 +63,7 @@ export async function POST(request: NextRequest) {
       country: (body.country as string | null) || null,
       callDate: (body.callDate as string | undefined) || new Date().toISOString(),
       frame: (body.frame as Debrief['frame']) || null,
-      magnification: (body.magnification as Debrief['magnification']) || null,
+      magnification: normalizeMags(body.magnification),
       px: !!body.px,
       headlight: (body.headlight as Debrief['headlight']) || null,
       outcome: (body.outcome as Debrief['outcome']) || null,

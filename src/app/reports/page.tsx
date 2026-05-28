@@ -12,6 +12,7 @@ interface ReportData {
   trends: Record<string, number[]>;
   reports: Record<string, {
     title: string;
+    type?: 'monthly' | 'snapshot';
     count?: number;
     thisMonthCount?: number;
     currentCount?: number;
@@ -28,6 +29,7 @@ interface ReportData {
     enteredThisMonth?: number;
     arrivedCount?: number;
     breakdown?: Record<string, number>;
+    byStatus?: Record<string, number>;
     data?: Record<string, unknown>[];
     crmData?: Record<string, unknown>[];
     directData?: Record<string, unknown>[];
@@ -46,15 +48,15 @@ function getMonthOptions() {
 }
 
 const REPORT_META = [
-  { key: 'report1', icon: 'user-plus', group: 'lead', countKey: 'count' },
-  { key: 'report2', icon: 'calendar', group: 'lead', countKey: 'calendarTotal' },
-  { key: 'report3', icon: 'user-x', group: 'lead', countKey: 'thisMonthCount' },
-  { key: 'report4', icon: 'check-circle', group: 'lead', countKey: 'totalPending' },
-  { key: 'report5', icon: 'alert-circle', group: 'lead', countKey: 'totalCount' },
-  { key: 'report6', icon: 'ruler', group: 'order', countKey: 'currentCount' },
-  { key: 'report7', icon: 'search', group: 'order', countKey: 'currentCount' },
-  { key: 'report8', icon: 'settings', group: 'order', countKey: 'totalCount' },
-  { key: 'report9', icon: 'truck', group: 'order', countKey: 'dispatchedCount' },
+  { key: 'report1', icon: 'user-plus',    group: 'lead',  countKey: 'count' },
+  { key: 'report2', icon: 'calendar',     group: 'lead',  countKey: 'calendarTotal' },
+  { key: 'report3', icon: 'user-x',       group: 'lead',  countKey: 'thisMonthCount' },
+  { key: 'report4', icon: 'check-circle', group: 'lead',  countKey: 'thisMonthCount' },
+  { key: 'report5', icon: 'alert-circle', group: 'lead',  countKey: 'thisMonthCount' },
+  { key: 'report6', icon: 'ruler',        group: 'order', countKey: 'currentCount' },
+  { key: 'report7', icon: 'search',       group: 'order', countKey: 'currentCount' },
+  { key: 'report8', icon: 'settings',     group: 'order', countKey: 'totalCount' },
+  { key: 'report9', icon: 'truck',        group: 'order', countKey: 'dispatchedCount' },
 ];
 
 const URGENCY_COLORS: Record<string, string> = {
@@ -86,6 +88,22 @@ export default function ReportsPage() {
     return (report as Record<string, unknown>)[meta.countKey] as number || 0;
   }
 
+  const monthLabel = data?.month || months[selectedMonth].label;
+  function TypeBadge({ type }: { type?: 'monthly' | 'snapshot' }) {
+    if (type === 'snapshot') {
+      return (
+        <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wider bg-[#1A1A1A] text-dim border border-[#222]">
+          Current
+        </span>
+      );
+    }
+    return (
+      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wider bg-data-blue/10 text-data-blue border border-data-blue/20">
+        {monthLabel}
+      </span>
+    );
+  }
+
   return (
     <div className="px-5 py-6 max-w-[1400px] mx-auto">
       {/* Month selector */}
@@ -108,7 +126,7 @@ export default function ReportsPage() {
       ) : (
         <>
           {/* Lead Reports */}
-          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-4">Lead Reports — {data.month}</h2>
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-4">Lead Activity — {data.month}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
             {REPORT_META.filter(m => m.group === 'lead').map(meta => {
               const report = data.reports[meta.key];
@@ -120,11 +138,26 @@ export default function ReportsPage() {
                   <button onClick={() => setExpanded(isOpen ? null : meta.key)}
                     className="w-full p-5 text-left hover:bg-surface-hover transition-colors">
                     <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium text-white">{report.title}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-white">{report.title}</p>
+                        <TypeBadge type={report.type} />
+                      </div>
                       <p className="text-2xl font-light text-white tabular-nums">{count}</p>
                     </div>
                     {report.staleCount !== undefined && report.staleCount > 0 && (
                       <p className="text-[11px] text-danger mt-1">{report.staleCount} over 24h without contact</p>
+                    )}
+                    {meta.key === 'report1' && report.byStatus && Object.keys(report.byStatus).length > 0 && (
+                      <div className="flex flex-wrap gap-x-2 gap-y-1 mt-2">
+                        {Object.entries(report.byStatus)
+                          .sort(([, a], [, b]) => b - a)
+                          .map(([status, n]) => (
+                            <span key={status} className="text-[10px] text-dim">
+                              <span className="text-muted">{status.replace('Virtual Demo ', 'VD ').replace(' From Customer', '')}</span>
+                              <span className="text-white ml-1 tabular-nums">{n}</span>
+                            </span>
+                          ))}
+                      </div>
                     )}
                     {report.noShowRate !== undefined && (
                       <p className="text-[11px] text-dim mt-1">No-show rate: {report.noShowRate}%</p>
@@ -140,19 +173,28 @@ export default function ReportsPage() {
                     <div className="border-t border-[#1A1A1A] p-4 max-h-80 overflow-y-auto">
                       {report.data.length === 0 ? <p className="text-xs text-dim">No records</p> : (
                         <div className="space-y-2">
-                          {(report.data as Record<string, unknown>[]).slice(0, 30).map((row, i) => (
-                            <div key={i} className="flex items-center gap-3 py-1.5 text-xs border-b border-[#1A1A1A]/50 last:border-0">
-                              <span className="text-white flex-1 truncate">{String(row.name || '')}</span>
-                              {row.country ? <span className="text-dim">{String(row.country)}</span> : null}
-                              {row.daysSince !== undefined && <span className="text-muted tabular-nums">{String(row.daysSince)}d</span>}
-                              {row.daysSinceDemo !== undefined && <span className="text-muted tabular-nums">{String(row.daysSinceDemo)}d</span>}
-                              {row.urgency ? <span className={`${URGENCY_COLORS[String(row.urgency)] || 'text-dim'}`}>{String(row.urgency)}</span> : null}
-                              {row.stale === true && <span className="text-danger">stale</span>}
-                              {row.rebooked === false && <span className="text-danger">needs rebook</span>}
-                              {row.rebooked === true && <span className="text-success">rebooked</span>}
-                              {row.recentlyCold === true && <span className="text-warning">recent</span>}
-                            </div>
-                          ))}
+                          {(report.data as Record<string, unknown>[]).slice(0, 30).map((row, i) => {
+                            const created = row.created ? new Date(String(row.created)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : null;
+                            const noShowDate = row.noShowDate ? new Date(String(row.noShowDate)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : null;
+                            const demoDate = row.demoDate ? new Date(String(row.demoDate)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : null;
+                            return (
+                              <div key={i} className="flex items-center gap-3 py-1.5 text-xs border-b border-[#1A1A1A]/50 last:border-0">
+                                <span className="text-white flex-1 truncate">{String(row.name || '')}</span>
+                                {created && <span className="text-dim tabular-nums">{created}</span>}
+                                {noShowDate && !created && <span className="text-dim tabular-nums">{noShowDate}</span>}
+                                {demoDate && !created && !noShowDate && <span className="text-dim tabular-nums">{demoDate}</span>}
+                                {row.status ? <span className="text-muted text-[10px] px-1.5 py-0.5 rounded bg-white/[0.04]">{String(row.status)}</span> : null}
+                                {row.country ? <span className="text-dim">{String(row.country)}</span> : null}
+                                {row.daysSince !== undefined && <span className="text-muted tabular-nums">{String(row.daysSince)}d</span>}
+                                {row.daysSinceDemo !== undefined && <span className="text-muted tabular-nums">{String(row.daysSinceDemo)}d</span>}
+                                {row.urgency ? <span className={`${URGENCY_COLORS[String(row.urgency)] || 'text-dim'}`}>{String(row.urgency)}</span> : null}
+                                {row.stale === true && <span className="text-danger">stale</span>}
+                                {row.rebooked === false && <span className="text-danger">needs rebook</span>}
+                                {row.rebooked === true && <span className="text-success">rebooked</span>}
+                                {row.recentlyCold === true && <span className="text-warning">recent</span>}
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                       {report.crmData && (report.crmData as Record<string, unknown>[]).length > 0 && (
@@ -184,8 +226,9 @@ export default function ReportsPage() {
             })}
           </div>
 
-          {/* Order Reports */}
-          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-4">Order Reports — {data.month}</h2>
+          {/* Order Reports — mix of current snapshots and monthly activity. Each card is tagged. */}
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-2">Orders</h2>
+          <p className="text-[11px] text-dim mb-4">Cards tagged <span className="text-data-blue">{data.month}</span> show monthly activity. Cards tagged <span className="text-muted">Current</span> are live snapshots that don&apos;t change with the month tab.</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
             {REPORT_META.filter(m => m.group === 'order').map(meta => {
               const report = data.reports[meta.key];
@@ -197,7 +240,10 @@ export default function ReportsPage() {
                   <button onClick={() => setExpanded(isOpen ? null : meta.key)}
                     className="w-full p-5 text-left hover:bg-surface-hover transition-colors">
                     <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium text-white">{report.title}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-white">{report.title}</p>
+                        <TypeBadge type={report.type} />
+                      </div>
                       <p className="text-2xl font-light text-white tabular-nums">{count}</p>
                     </div>
                     {report.breakdown && (

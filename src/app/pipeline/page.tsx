@@ -8,10 +8,15 @@ interface PipelineStage {
   leads: { name: string; email: string | null; phone: string | null; country: string | null; days: number }[];
 }
 
+interface CompletedDemoItem { name: string; email: string; phone: string | null; date: string; country: string | null; source: 'calendar' | 'zoho_vdc'; status: string | null; hasOrder: boolean }
+interface NoShowItem { name: string; email: string | null; phone: string | null; date: string; country: string | null; rebooked: boolean }
+
 interface PipelineData {
   configured: boolean;
   month: string;
   kpis: { newLeads: number; demosBooked: number; demosCompleted: number; noShows: number; ordersThisMonth: number; activePipelineValue: number };
+  completedDemos?: { count: number; items: CompletedDemoItem[]; debug: Record<string, number> };
+  noShowItems?: NoShowItem[];
   activePipeline: Record<string, PipelineStage>;
   directBookings: { name: string; email: string; date: string; isPast: boolean }[];
   directBookingCount: number;
@@ -40,6 +45,7 @@ export default function PipelinePage() {
   const [data, setData] = useState<PipelineData | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [drilldown, setDrilldown] = useState<'completed' | 'noshow' | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -119,25 +125,133 @@ export default function PipelinePage() {
         ))}
       </div>
 
-      {/* This Month KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-8">
+      {/* Monthly KPIs */}
+      <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-3">Activity in {data.month}</h2>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
         {[
           { label: 'New Leads', val: data.kpis.newLeads },
           { label: 'Demos Booked', val: data.kpis.demosBooked },
-          { label: 'Demos Completed', val: data.kpis.demosCompleted },
-          { label: 'No Shows', val: data.kpis.noShows, danger: true },
+          { label: 'Demos Completed', val: data.kpis.demosCompleted, click: 'completed' as const },
+          { label: 'No Shows', val: data.kpis.noShows, danger: true, click: 'noshow' as const },
           { label: 'Orders', val: data.kpis.ordersThisMonth },
-          { label: 'Active Value', val: `$${data.kpis.activePipelineValue.toLocaleString()}`, small: true },
-        ].map((k, i) => (
-          <div key={i} className="rounded-2xl border border-[#1A1A1A] bg-surface p-4">
-            <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-[#555] mb-1">{k.label}</p>
-            <p className={`${k.small ? 'text-lg' : 'text-2xl'} font-light tabular-nums ${k.danger ? 'text-danger' : 'text-white'}`}>{k.val}</p>
-          </div>
-        ))}
+          { label: 'Active Value', val: `$${data.kpis.activePipelineValue.toLocaleString()}`, small: true, snapshot: true },
+        ].map((k, i) => {
+          const inner = (
+            <>
+              <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-[#555] mb-1">{k.label}{k.snapshot ? ' · now' : ''}</p>
+              <p className={`${k.small ? 'text-lg' : 'text-2xl'} font-light tabular-nums ${k.danger ? 'text-danger' : 'text-white'}`}>{k.val}</p>
+            </>
+          );
+          if (k.click) {
+            return (
+              <button key={i}
+                onClick={() => setDrilldown(drilldown === k.click ? null : k.click!)}
+                className={`rounded-2xl border ${drilldown === k.click ? 'border-[#333]' : 'border-[#1A1A1A]'} bg-surface p-4 text-left hover:bg-surface-hover transition-colors`}>
+                {inner}
+              </button>
+            );
+          }
+          return <div key={i} className="rounded-2xl border border-[#1A1A1A] bg-surface p-4">{inner}</div>;
+        })}
       </div>
 
-      {/* Pre-Purchase Pipeline */}
-      <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-3">Pre-Purchase Pipeline</h2>
+      {/* Drilldown */}
+      {drilldown && (
+        <div className="rounded-2xl border border-[#222] bg-surface mb-6 overflow-hidden">
+          <div className="p-4 border-b border-[#1A1A1A] flex items-center justify-between">
+            <h3 className="text-sm font-medium text-white">
+              {drilldown === 'completed'
+                ? `Demos Completed — ${data.month} (${data.completedDemos?.count ?? 0})`
+                : `No Shows — ${data.month} (${data.noShowItems?.length ?? 0})`}
+            </h3>
+            <button onClick={() => setDrilldown(null)} className="text-xs text-dim hover:text-muted">Close</button>
+          </div>
+          {drilldown === 'completed' && data.completedDemos && (
+            <>
+              <div className="px-4 py-2 border-b border-[#1A1A1A] text-[11px] text-dim flex flex-wrap gap-x-4 gap-y-1">
+                <span>Calendar events: <span className="text-muted">{data.completedDemos.debug.calendarTotalInMonth}</span></span>
+                <span>Past sales calls: <span className="text-muted">{data.completedDemos.debug.pastSalesCalls}</span></span>
+                <span>− No shows: <span className="text-danger">{data.completedDemos.debug.noShows}</span></span>
+                <span>− Cancellations: <span className="text-warning">{data.completedDemos.debug.cancellations}</span></span>
+                <span>+ Zoho-only VDC: <span className="text-muted">{data.completedDemos.debug.fromZohoVDCOnly}</span></span>
+                <span className="ml-auto text-white">= {data.completedDemos.count}</span>
+              </div>
+              <div className="max-h-96 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-surface">
+                    <tr className="border-b border-[#1A1A1A] text-left">
+                      <th className="py-2 pl-4 text-[10px] text-[#555]">#</th>
+                      <th className="py-2 text-[10px] text-[#555]">Name</th>
+                      <th className="py-2 text-[10px] text-[#555]">Phone</th>
+                      <th className="py-2 text-[10px] text-[#555]">Date</th>
+                      <th className="py-2 text-[10px] text-[#555]">Country</th>
+                      <th className="py-2 pr-4 text-[10px] text-[#555]">CRM Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.completedDemos.items.map((it, i) => (
+                      <tr key={i} className="border-b border-[#1A1A1A]/40 hover:bg-white/[0.02]">
+                        <td className="py-2 pl-4 text-dim tabular-nums">{i + 1}</td>
+                        <td className="py-2">
+                          <p className="text-white">{it.name}</p>
+                          <p className="text-[10px] text-dim">{it.email}</p>
+                        </td>
+                        <td className="py-2 font-mono tabular-nums">{it.phone ? <a href={`tel:${it.phone.replace(/\s/g, '')}`} className="text-muted hover:text-white">{it.phone}</a> : <span className="text-dim">—</span>}</td>
+                        <td className="py-2 text-muted">{new Date(it.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</td>
+                        <td className="py-2 text-dim">{it.country || '—'}</td>
+                        <td className="py-2 pr-4">
+                          <span className={`text-[10px] ${it.hasOrder ? 'text-success' : 'text-muted'}`}>
+                            {it.hasOrder ? 'Ordered' : (it.status || '—')}
+                          </span>
+                          {it.source === 'zoho_vdc' && <span className="ml-1 text-[9px] text-dim">(zoho)</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+          {drilldown === 'noshow' && data.noShowItems && (
+            <div className="max-h-96 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-surface">
+                  <tr className="border-b border-[#1A1A1A] text-left">
+                    <th className="py-2 pl-4 text-[10px] text-[#555]">#</th>
+                    <th className="py-2 text-[10px] text-[#555]">Name</th>
+                    <th className="py-2 text-[10px] text-[#555]">Phone</th>
+                    <th className="py-2 text-[10px] text-[#555]">Date</th>
+                    <th className="py-2 pr-4 text-[10px] text-[#555]">Rebooked?</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.noShowItems.map((it, i) => (
+                    <tr key={i} className="border-b border-[#1A1A1A]/40 hover:bg-white/[0.02]">
+                      <td className="py-2 pl-4 text-dim tabular-nums">{i + 1}</td>
+                      <td className="py-2">
+                        <p className="text-white">{it.name}</p>
+                        <p className="text-[10px] text-dim">{it.email}</p>
+                      </td>
+                      <td className="py-2 font-mono tabular-nums">{it.phone ? <a href={`tel:${it.phone.replace(/\s/g, '')}`} className="text-muted hover:text-white">{it.phone}</a> : <span className="text-dim">—</span>}</td>
+                      <td className="py-2 text-muted">{new Date(it.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</td>
+                      <td className="py-2 pr-4">
+                        {it.rebooked
+                          ? <span className="text-success">Rebooked</span>
+                          : <span className="text-danger">Needs rebook</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Pre-Purchase Pipeline — snapshot, NOT filtered by selected month */}
+      <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-2 border-b border-[#1A1A1A] mb-1">Current Pipeline</h2>
+      <p className="text-[11px] text-dim mb-3">Live snapshot — counts below don&apos;t change when you switch months.</p>
+      <h3 className="text-[10px] font-medium uppercase tracking-[0.15em] text-dim mb-2">Pre-Purchase</h3>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
         {PRE_STAGES.map(s => <StageBox key={s} stage={s} color="bg-data-blue" />)}
       </div>
@@ -145,8 +259,8 @@ export default function PipelinePage() {
         {PROBLEM_STAGES.map(s => <StageBox key={s} stage={s} color="bg-danger" />)}
       </div>
 
-      {/* Post-Purchase Pipeline */}
-      <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-3">Post-Purchase Pipeline</h2>
+      {/* Post-Purchase Pipeline — also snapshot */}
+      <h3 className="text-[10px] font-medium uppercase tracking-[0.15em] text-dim mb-2">Post-Purchase</h3>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-8">
         {POST_STAGES.filter(s => stageCount(s) > 0 || ['Awaiting Measurements', 'In Manufacturing', 'Dispatched'].includes(s)).map(s => (
           <StageBox key={s} stage={s} color="bg-success" />

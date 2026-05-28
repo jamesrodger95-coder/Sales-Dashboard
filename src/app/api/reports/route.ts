@@ -7,6 +7,7 @@ import {
   DEAL_SHIPPED, DEAL_POST_DELIVERY, DEAL_READY,
 } from '@/lib/zoho-client';
 import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail } from '@/lib/google-calendar';
+import { getCompletedDemos } from '@/lib/data-engine';
 
 function daysSince(dateStr: string): number {
   return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
@@ -60,24 +61,38 @@ export async function GET(request: NextRequest) {
     const dealsCurrentlyAt = (stages: string[]) =>
       deals.filter(d => stages.includes(d.Stage));
 
-    // === REPORT 1: New E-Com Leads (Registered this month) ===
-    const registeredThisMonth = leads.filter(l =>
-      isInMonth(l.Created_Time, year, month) && (!l.Status || l.Status === 'Registered' || l.Status === '-None-' || l.Status === 'Not Contacted')
-    );
-    // Also count leads currently stuck in Registered
-    const stillRegistered = leads.filter(l =>
-      (!l.Status || l.Status === 'Registered' || l.Status === '-None-' || l.Status === 'Not Contacted') && daysSince(l.Created_Time) > 1
+    // === REPORT 1: New E-Com Leads (created this month — ALL leads created in window) ===
+    // Rule: count by Created_Time only. Current Status is irrelevant — a lead that came in
+    // in May and progressed to FCM still "arrived in May".
+    const newLeadsThisMonth = leads.filter(l => isInMonth(l.Created_Time, year, month));
+    // Subset still waiting for first contact (over 24h)
+    const staleSubset = newLeadsThisMonth.filter(l =>
+      (!l.Status || l.Status === 'Registered' || l.Status === '-None-' || l.Status === 'Not Contacted')
+      && daysSince(l.Created_Time) > 1
     );
 
+    // Breakdown by current status — answers "where did these {count} new leads end up?"
+    const byStatus: Record<string, number> = {};
+    newLeadsThisMonth.forEach(l => {
+      const s = l.Status && l.Status !== '-None-' ? l.Status : 'Registered';
+      byStatus[s] = (byStatus[s] || 0) + 1;
+    });
+
     const report1 = {
-      title: 'New E-Com Leads',
-      count: registeredThisMonth.length,
-      staleCount: stillRegistered.length,
-      data: registeredThisMonth.map(l => ({
-        name: l.Full_Name, email: l.Email, phone: getLeadPhone(l),
-        country: l.Country, created: l.Created_Time, daysSince: daysSince(l.Created_Time),
-        stale: daysSince(l.Created_Time) > 1,
-      })),
+      title: 'New Leads',
+      type: 'monthly' as const,
+      count: newLeadsThisMonth.length,
+      staleCount: staleSubset.length,
+      byStatus,
+      data: newLeadsThisMonth
+        .slice()
+        .sort((a, b) => (b.Created_Time || '').localeCompare(a.Created_Time || ''))
+        .map(l => ({
+          name: l.Full_Name, email: l.Email, phone: getLeadPhone(l),
+          country: l.Country, created: l.Created_Time, daysSince: daysSince(l.Created_Time),
+          status: l.Status && l.Status !== '-None-' ? l.Status : 'Registered',
+          stale: daysSince(l.Created_Time) > 1 && (!l.Status || l.Status === 'Registered' || l.Status === '-None-' || l.Status === 'Not Contacted'),
+        })),
     };
 
     // === REPORT 2: Virtual Demos Booked (CRM + Calendar combined) ===
@@ -91,6 +106,7 @@ export async function GET(request: NextRequest) {
 
     const report2 = {
       title: 'Demos Booked',
+      type: 'monthly' as const,
       crmCount: crmVDB.length,
       directCount: directBookings.length,
       totalCount: crmVDB.length + directBookings.length,
@@ -111,6 +127,7 @@ export async function GET(request: NextRequest) {
 
     const report3 = {
       title: 'No Contact Leads',
+      type: 'monthly' as const,
       thisMonthCount: noContactThisMonth.length,
       totalCurrentCount: allNoContact.length,
       data: noContactThisMonth.map(l => ({
@@ -121,44 +138,48 @@ export async function GET(request: NextRequest) {
       })),
     };
 
-    // === REPORT 4: VD Completed ===
-    const vdcThisMonth = leadsInStatusThisMonth('Virtual Demo Completed');
-    const allVDC = leadsCurrentlyAt(['Virtual Demo Completed', 'Demo Completed']);
+    // === REPORT 4: Demos Completed ===
+    // Calendar past (sales calls, not cancelled, not no-show) + Zoho VDC moves this month, dedup by email.
+    const completed = getCompletedDemos(calEvents, leads, dealsByEmail, year, month, now);
+    const allVDC = leadsCurrentlyAt(['Virtual Demo Completed', 'Demo Completed']); // legacy snapshot for reference
+
+    console.log(`[Reports] ${monthLabel} demos completed = ${completed.count}`, completed.debug);
 
     const report4 = {
       title: 'Demos Completed',
-      thisMonthCount: vdcThisMonth.length,
+      type: 'monthly' as const,
+      thisMonthCount: completed.count,
       totalPending: allVDC.length,
-      data: allVDC.map(l => {
-        const email = l.Email?.toLowerCase() || '';
-        const hasDeal = email ? dealsByEmail.has(email) : false;
-        const deal = email ? dealsByEmail.get(email) : undefined;
-        const days = daysSince(l.Modified_Time);
+      debug: completed.debug,
+      data: completed.items.map(it => {
+        const days = Math.floor((Date.now() - new Date(it.date).getTime()) / 86400000);
         return {
-          name: l.Full_Name, email: l.Email, phone: getLeadPhone(l),
-          country: l.Country, demoDate: l.Modified_Time, daysSinceDemo: days,
-          hasOrder: hasDeal,
-          orderStage: deal?.Stage || null,
-          orderValue: deal ? getDealValue(deal) : null,
-          urgency: hasDeal ? 'ordered' : days > 14 ? 'at_risk' : days > 7 ? 'follow_up' : 'ok',
+          name: it.name, email: it.email, phone: it.phone,
+          country: it.country, demoDate: it.date, daysSinceDemo: days,
+          hasOrder: it.hasOrder,
+          orderStage: it.status,
+          orderValue: null,
+          source: it.source,
+          urgency: it.hasOrder ? 'ordered' : days > 14 ? 'at_risk' : days > 7 ? 'follow_up' : 'ok',
         };
       }),
     };
 
-    // Conversion rate for this report
+    // Conversion rate over THIS MONTH's completed demos
     const vdcWithOrder = report4.data.filter(d => d.hasOrder).length;
-    const demoToOrderRate = allVDC.length > 0 ? Math.round((vdcWithOrder / allVDC.length) * 100) : 0;
+    const demoToOrderRate = completed.count > 0 ? Math.round((vdcWithOrder / completed.count) * 100) : 0;
 
-    // === REPORT 5: No Shows ===
+    // === REPORT 5: No Shows (moved to No Show this month) ===
     const noShowsThisMonth = leadsInStatusThisMonth('No Show');
     const allNoShows = leadsCurrentlyAt(['No Show']);
 
     const report5 = {
       title: 'No Shows',
+      type: 'monthly' as const,
       thisMonthCount: noShowsThisMonth.length,
       totalCount: allNoShows.length,
       noShowRate: salesCalls.length > 0 ? Math.round((noShowsThisMonth.length / salesCalls.length) * 100) : 0,
-      data: allNoShows.map(l => {
+      data: noShowsThisMonth.map(l => {
         const email = l.Email?.toLowerCase() || '';
         // Check if rebooked (has a VDB or calendar event after the no-show)
         const hasRebook = email ? (leadsByEmail.get(email)?.Status === 'Virtual Demo Booked') : false;
@@ -174,6 +195,7 @@ export async function GET(request: NextRequest) {
     const awaitingMeasurements = dealsCurrentlyAt(['Awaiting Measurements']);
     const report6 = {
       title: 'Awaiting Measurements',
+      type: 'snapshot' as const,
       currentCount: awaitingMeasurements.length,
       enteredThisMonth: dealsInStageThisMonth(['Awaiting Measurements']).length,
       data: awaitingMeasurements.map(d => {
@@ -191,6 +213,7 @@ export async function GET(request: NextRequest) {
     const finalChecks = dealsCurrentlyAt(['Measurements Final Checks']);
     const report7 = {
       title: 'Final Checks',
+      type: 'snapshot' as const,
       currentCount: finalChecks.length,
       data: finalChecks.map(d => {
         const days = daysSince(d.Modified_Time);
@@ -212,6 +235,7 @@ export async function GET(request: NextRequest) {
     const allInProcess = [...inManufacturing, ...assembled, ...readyToSend, ...addressConfirmed];
     const report8 = {
       title: 'Orders In Process',
+      type: 'snapshot' as const,
       totalCount: allInProcess.length,
       breakdown: {
         manufacturing: inManufacturing.length,
@@ -237,6 +261,7 @@ export async function GET(request: NextRequest) {
 
     const report9 = {
       title: 'Orders Dispatched',
+      type: 'monthly' as const,
       dispatchedCount: dispatchedThisMonth.length,
       arrivedCount: arrivedThisMonth.length,
       revenueDispatched: Math.round(dispatchedValue),

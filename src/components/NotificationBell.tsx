@@ -9,8 +9,14 @@ interface Item {
   notes: string;
   followUpDate: string | null;
   outcome: string | null;
-  magnification: string | null;
+  magnification: string | string[] | null;
   headlight: string | null;
+}
+
+function magText(m: string | string[] | null | undefined): string | null {
+  if (!m) return null;
+  if (Array.isArray(m)) return m.length ? m.join(' / ') : null;
+  return m;
 }
 
 export default function NotificationBell() {
@@ -79,7 +85,7 @@ export default function NotificationBell() {
                 >
                   <p className="text-sm font-medium text-black truncate">{it.name}</p>
                   <p className="text-[11px] text-[#666] truncate mt-0.5">
-                    {[it.magnification, it.headlight, it.outcome].filter(Boolean).join(' · ') || '—'}
+                    {[magText(it.magnification), it.headlight, it.outcome].filter(Boolean).join(' · ') || '—'}
                   </p>
                   {it.notes && <p className="text-[11px] text-[#999] truncate mt-0.5 italic">&ldquo;{it.notes}&rdquo;</p>}
                 </Link>

@@ -47,7 +47,7 @@ export default function CallsPage() {
   const months = useMemo(() => getMonthOptions(), []);
   const [selectedMonth, setSelectedMonth] = useState(0);
   const [calls, setCalls] = useState<CallRecord[]>([]);
-  const [debriefsByEmail, setDebriefsByEmail] = useState<Record<string, { id: string; frame: string | null; magnification: string | null; px: boolean; headlight: string | null; outcome: string | null; notes: string }>>({});
+  const [debriefsByEmail, setDebriefsByEmail] = useState<Record<string, { id: string; frame: string | null; magnification: string | string[] | null; px: boolean; headlight: string | null; outcome: string | null; notes: string }>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
@@ -80,7 +80,7 @@ export default function CallsPage() {
 
       const map: typeof debriefsByEmail = {};
       if (debResSettled.status === 'fulfilled') {
-        (debResSettled.value.debriefs || []).forEach((d: { email?: string | null; id: string; frame: string | null; magnification: string | null; px: boolean; headlight: string | null; outcome: string | null; notes: string }) => {
+        (debResSettled.value.debriefs || []).forEach((d: { email?: string | null; id: string; frame: string | null; magnification: string | string[] | null; px: boolean; headlight: string | null; outcome: string | null; notes: string }) => {
           if (d.email) map[d.email.toLowerCase()] = { id: d.id, frame: d.frame, magnification: d.magnification, px: d.px, headlight: d.headlight, outcome: d.outcome, notes: d.notes };
         });
       }
@@ -288,7 +288,7 @@ export default function CallsPage() {
                             <div className="pt-2 border-t border-[#1A1A1A]">
                               <p className="text-[10px] tracking-[0.15em] uppercase text-dim mb-1">Call notes logged</p>
                               <p className="text-muted">
-                                {[debrief.frame, debrief.magnification, debrief.px ? 'PX' : null, debrief.headlight, debrief.outcome].filter(Boolean).join(' · ') || '—'}
+                                {[debrief.frame, Array.isArray(debrief.magnification) ? (debrief.magnification.length ? debrief.magnification.join(' / ') : null) : debrief.magnification, debrief.px ? 'PX' : null, debrief.headlight, debrief.outcome].filter(Boolean).join(' · ') || '—'}
                               </p>
                               {debrief.notes && <p className="text-dim italic mt-1">&ldquo;{debrief.notes}&rdquo;</p>}
                             </div>

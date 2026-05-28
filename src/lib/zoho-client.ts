@@ -33,6 +33,16 @@ async function getAccessToken(): Promise<string> {
   finally { tokenPromise = null; }
 }
 
+async function readJsonSafely(res: Response): Promise<Record<string, unknown>> {
+  // Zoho Search returns 204 (no body) when nothing matches. Avoid the noisy
+  // "Unexpected end of JSON input" from calling .json() on an empty response.
+  if (res.status === 204) return {};
+  const text = await res.text();
+  if (!text) return {};
+  try { return JSON.parse(text) as Record<string, unknown>; }
+  catch { return {}; }
+}
+
 async function zohoFetch(path: string): Promise<Record<string, unknown>> {
   const apiDomain = process.env.ZOHO_API_DOMAIN || 'https://www.zohoapis.com';
   const token = await getAccessToken();
@@ -43,11 +53,12 @@ async function zohoFetch(path: string): Promise<Record<string, unknown>> {
   if (res.status === 401) {
     cachedToken = null; tokenExpiry = 0;
     const newToken = await getAccessToken();
-    return (await fetch(`${apiDomain}${path}`, {
+    const retry = await fetch(`${apiDomain}${path}`, {
       cache: 'no-store', headers: { 'Authorization': `Zoho-oauthtoken ${newToken}` },
-    })).json() as Promise<Record<string, unknown>>;
+    });
+    return readJsonSafely(retry);
   }
-  return res.json() as Promise<Record<string, unknown>>;
+  return readJsonSafely(res);
 }
 
 async function zohoPost(path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -315,6 +326,20 @@ export async function searchLeadByEmail(email: string): Promise<ZohoLead | null>
     return matches[0] || null;
   } catch (err) {
     console.error('[Zoho] searchLeadByEmail failed:', err);
+    return null;
+  }
+}
+
+// Live lookup of a deal by email — bypasses the 5-min bulk deals cache so the
+// caller can re-check a record that was previously classified as "Direct".
+export async function searchDealByEmail(email: string): Promise<ZohoDeal | null> {
+  if (!email) return null;
+  try {
+    const data = await zohoFetch(`/crm/v6/Deals/search?email=${encodeURIComponent(email)}&fields=${DEAL_FIELDS}`);
+    const matches = (data.data as ZohoDeal[] | undefined) || [];
+    return matches[0] || null;
+  } catch (err) {
+    console.error('[Zoho] searchDealByEmail failed:', err);
     return null;
   }
 }

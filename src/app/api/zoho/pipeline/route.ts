@@ -3,10 +3,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   fetchAllJamesDeals, fetchAllJamesLeads, isZohoConfigured,
   getDealValue, getLeadPhone, buildEmailMaps, getMfgStatus,
-  isInMonth,
+  isInMonth, searchLeadByEmail, searchDealByEmail,
   DEAL_IN_PROGRESS, DEAL_AWAITING, DEAL_READY,
 } from '@/lib/zoho-client';
 import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail } from '@/lib/google-calendar';
+import { getCompletedDemos } from '@/lib/data-engine';
 
 function daysSince(dateStr: string): number {
   return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
@@ -90,26 +91,57 @@ export async function GET(request: NextRequest) {
 
     // === THIS MONTH KPIs ===
     const newLeadsThisMonth = leads.filter(l => isInMonth(l.Created_Time, year, month)).length;
-    const demosCompletedThisMonth = leads.filter(l =>
-      (l.Status === 'Virtual Demo Completed' || l.Status === 'Demo Completed') && isInMonth(l.Modified_Time, year, month)
-    ).length;
+    const completed = getCompletedDemos(calEvents, leads, dealsByEmail, year, month, now);
+    const demosCompletedThisMonth = completed.count;
     const noShowsThisMonth = leads.filter(l => l.Status === 'No Show' && isInMonth(l.Modified_Time, year, month)).length;
     const ordersThisMonth = deals.filter(d => isInMonth(d.Created_Time, year, month)).length;
 
+    console.log(`[Pipeline] ${monthLabel} demos completed = ${completed.count}`, {
+      calendarTotalInMonth: completed.debug.calendarTotalInMonth,
+      pastSalesCalls: completed.debug.pastSalesCalls,
+      noShows: completed.debug.noShows,
+      cancellations: completed.debug.cancellations,
+      fromCalendar: completed.debug.fromCalendar,
+      fromZohoVDCOnly: completed.debug.fromZohoVDCOnly,
+    });
+
     // === DIRECT BOOKINGS (calendar only, no Zoho record) ===
-    const directBookings = salesCalls
+    // First pass: pick candidates using the bulk 5-min cache.
+    const directCandidates = salesCalls
       .map(e => {
-        const email = getExternalAttendeeEmail(e).toLowerCase();
+        const emailRaw = getExternalAttendeeEmail(e);
+        const email = emailRaw.toLowerCase();
         const inZoho = email && (leadsByEmail.has(email) || dealsByEmail.has(email));
         if (inZoho) return null;
         return {
           name: extractLeadName(e),
-          email: getExternalAttendeeEmail(e),
+          email: emailRaw,
           date: e.start,
           isPast: new Date(e.start) < now,
         };
       })
-      .filter(Boolean);
+      .filter((x): x is { name: string; email: string; date: string; isPast: boolean } => x !== null);
+
+    // Live re-check pass: a calendar booking can appear here just because the
+    // VA added the lead to Zoho AFTER the bulk cache was warmed. Search Zoho
+    // per-email and drop anything that now resolves to a real record.
+    const directBookings: typeof directCandidates = [];
+    if (directCandidates.length > 0) {
+      console.log(`[Pipeline] Live re-checking ${directCandidates.length} direct booking candidate(s)...`);
+      const checks = await Promise.all(directCandidates.map(async c => {
+        if (!c.email) return c; // no email = can't re-check, keep as direct
+        const [lead, deal] = await Promise.all([
+          searchLeadByEmail(c.email),
+          searchDealByEmail(c.email),
+        ]);
+        if (lead || deal) {
+          console.log(`[Pipeline] ${c.email}: now in Zoho (${lead?.Status || deal?.Stage}) — removing from Direct list`);
+          return null;
+        }
+        return c;
+      }));
+      for (const r of checks) if (r) directBookings.push(r);
+    }
 
     // === FOLLOW-UP ACTIONS (only recent, max 14 days for red, 30 days for yellow) ===
     const redFlags: { name: string; stage: string; days: number; action: string; email: string | null; phone: string | null }[] = [];
@@ -166,6 +198,22 @@ export async function GET(request: NextRequest) {
       return { name: d.Deal_Name, product: m.product, weeksElapsed: m.weeksElapsed, targetWeeks: m.targetWeeks, status: m.status, country: d.Country, value: getDealValue(d) };
     });
 
+    // No-show list for the same month (drives the No Shows drilldown)
+    const noShowItems = leads
+      .filter(l => l.Status === 'No Show' && isInMonth(l.Modified_Time, year, month))
+      .map(l => {
+        const key = (l.Email || '').toLowerCase();
+        const rebooked = key ? (leadsByEmail.get(key)?.Status === 'Virtual Demo Booked') : false;
+        return {
+          name: l.Full_Name,
+          email: l.Email,
+          phone: getLeadPhone(l),
+          date: l.Modified_Time,
+          country: l.Country,
+          rebooked,
+        };
+      });
+
     return NextResponse.json({
       configured: true,
       month: monthLabel,
@@ -177,6 +225,12 @@ export async function GET(request: NextRequest) {
         ordersThisMonth,
         activePipelineValue: Math.round(activePipelineValue),
       },
+      completedDemos: {
+        count: completed.count,
+        items: completed.items,
+        debug: completed.debug,
+      },
+      noShowItems,
       activePipeline,
       directBookings,
       directBookingCount: directBookings.length,

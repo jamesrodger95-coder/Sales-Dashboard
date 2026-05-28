@@ -45,6 +45,7 @@ interface DashboardData {
   tomorrowSchedule: ScheduleItem[];
   month: string;
   zoho?: ZohoSummary | null;
+  errors?: { calendar?: string; zoho?: string };
 }
 
 export default function Dashboard() {
@@ -61,15 +62,19 @@ export default function Dashboard() {
     setLoading(true);
     setSyncState('syncing');
     try {
-      const data = await fetch('/api/dashboard').then(r => r.json());
-      if (data.error) throw new Error(data.error);
+      const res = await fetch('/api/dashboard');
+      const data = await res.json();
+      // Top-level error means BOTH sides failed — the API only returns this if it can't respond at all
+      if (data.error && !data.kpis) throw new Error(data.error);
       setDashboard(data);
       if (data.analytics) setAnalytics(data.analytics);
+      // Partial failure (one source down): show synced but the banner below will explain
       setSyncState('synced');
       setLastSynced(new Date());
       if (syncedTimer.current) clearTimeout(syncedTimer.current);
       syncedTimer.current = setTimeout(() => setSyncState('idle'), 2500);
-    } catch {
+    } catch (err) {
+      console.error('[Dashboard] load failed:', err);
       setSyncState('error');
     } finally {
       setLoading(false);
@@ -160,6 +165,24 @@ export default function Dashboard() {
       )}
 
       <SyncStatus status={syncState} onRefresh={loadData} lastSynced={lastSynced} />
+
+      {/* Per-service error banner — shown when one source fails but the other works */}
+      {dashboard?.errors && (dashboard.errors.calendar || dashboard.errors.zoho) && (
+        <div className="mb-4 space-y-2">
+          {dashboard.errors.calendar && (
+            <div className="px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-400 flex items-start gap-2">
+              <span className="font-semibold shrink-0">Calendar sync failed:</span>
+              <span className="text-red-300/90 break-all">{dashboard.errors.calendar}</span>
+            </div>
+          )}
+          {dashboard.errors.zoho && (
+            <div className="px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-400 flex items-start gap-2">
+              <span className="font-semibold shrink-0">Zoho sync failed:</span>
+              <span className="text-red-300/90 break-all">{dashboard.errors.zoho}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* AI Briefing card */}
       <BriefingCard />
@@ -302,11 +325,11 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* CRM Pipeline Summary */}
+      {/* CRM Pipeline Summary — current snapshot, not filtered by month */}
       {dashboard?.zoho?.connected ? (
         <div className="mb-6">
           <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-[#555] pb-3 border-b border-[#1A1A1A] mb-4">
-            Pipeline Overview
+            Current Pipeline <span className="text-dim normal-case tracking-normal ml-1">· live snapshot</span>
             <Link href="/pipeline" className="text-muted hover:text-white transition-colors ml-3 normal-case tracking-normal">View full pipeline</Link>
           </h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">

@@ -1,11 +1,11 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { readAll, update, bucketByDate, Debrief } from '@/lib/debriefs';
+import { readAll, update, bucketByDate, magsJoin, Debrief } from '@/lib/debriefs';
 import { isTelegramConfigured, sendToJames } from '@/lib/telegram';
 
 function fmtRow(d: Debrief, prefix: string): string {
-  const cfg = [d.magnification, d.headlight, d.outcome].filter(Boolean).join(', ');
+  const cfg = [magsJoin(d) || null, d.headlight, d.outcome].filter(Boolean).join(', ');
   const note = d.notes ? ` — "${d.notes}"` : '';
   const country = d.country ? ` (${d.country})` : '';
   const overdue = d.followUpDate ? Math.max(0, Math.floor((Date.now() - new Date(d.followUpDate).getTime()) / 86400000)) : 0;

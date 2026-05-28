@@ -18,11 +18,17 @@ const INITIAL_COLORS = ['#60A5FA', '#34D399', '#FBBF24', '#A78BFA', '#F87171', '
 interface DebriefSummary {
   id: string;
   frame: string | null;
-  magnification: string | null;
+  magnification: string | string[] | null;
   px: boolean;
   headlight: string | null;
   outcome: string | null;
   notes: string;
+}
+
+function magText(m: string | string[] | null | undefined, sep = ' / '): string | null {
+  if (!m) return null;
+  if (Array.isArray(m)) return m.length ? m.join(sep) : null;
+  return m;
 }
 
 export default function CallList({ calls, loading }: CallListProps) {
@@ -142,7 +148,7 @@ export default function CallList({ calls, loading }: CallListProps) {
                           <div>
                             <p className="text-[10px] tracking-[0.15em] uppercase text-dim mb-1">Call notes logged</p>
                             <p className="text-muted">
-                              {[debrief.frame, debrief.magnification, debrief.px ? 'PX' : null, debrief.headlight, debrief.outcome].filter(Boolean).join(' · ') || '—'}
+                              {[debrief.frame, magText(debrief.magnification), debrief.px ? 'PX' : null, debrief.headlight, debrief.outcome].filter(Boolean).join(' · ') || '—'}
                             </p>
                             {debrief.notes && <p className="text-dim italic mt-1">&ldquo;{debrief.notes}&rdquo;</p>}
                           </div>

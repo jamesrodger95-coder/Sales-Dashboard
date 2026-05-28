@@ -1,18 +1,15 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchCalendarEvents, isSalesCall, extractLeadName, getExternalAttendeeEmail, extractPhone, extractCountry, detectBookingPlatform } from '@/lib/google-calendar';
-import { fetchAllJamesDeals, fetchAllJamesLeads, isZohoConfigured, getDealValue, getLeadPhone, ZohoLead, ZohoDeal } from '@/lib/zoho-client';
+import { fetchAllJamesDeals, fetchAllJamesLeads, isZohoConfigured, getDealValue, getLeadPhone, searchLeadByEmail, searchDealByEmail, ZohoLead, ZohoDeal } from '@/lib/zoho-client';
 
 type Status = 'ordered' | 'demo_done' | 'no_show' | 'gone_cold' | 'in_pipeline' | 'direct_booking' | 'pending';
+type ClassifyResult = { status: Status; stage: string | null; value: number | null; dealName: string | null };
 
-const classify = (email: string, leads: Map<string, ZohoLead>, deals: Map<string, ZohoDeal>): { status: Status; stage: string | null; value: number | null; dealName: string | null } => {
-  const e = email.toLowerCase();
-  if (!e) return { status: 'pending', stage: null, value: null, dealName: null };
-
-  const deal = deals.get(e);
+// Pure classifier: given a lead + deal (or null), return the status. Used both
+// for the bulk-cache pass and the live re-check pass.
+const classifyMatch = (lead: ZohoLead | null, deal: ZohoDeal | null): ClassifyResult | null => {
   if (deal) return { status: 'ordered', stage: deal.Stage, value: getDealValue(deal), dealName: deal.Deal_Name };
-
-  const lead = leads.get(e);
   if (lead) {
     const s = lead.Status;
     if (s === 'Purchased') return { status: 'ordered', stage: 'Purchased', value: null, dealName: null };
@@ -21,8 +18,14 @@ const classify = (email: string, leads: Map<string, ZohoLead>, deals: Map<string
     if (s === 'No Contact From Customer' || s === 'No Contact' || s === 'No Contact -') return { status: 'gone_cold', stage: s, value: null, dealName: null };
     return { status: 'in_pipeline', stage: s || 'Registered', value: null, dealName: null };
   }
+  return null;
+};
 
-  return { status: 'direct_booking', stage: null, value: null, dealName: null };
+const classify = (email: string, leads: Map<string, ZohoLead>, deals: Map<string, ZohoDeal>): ClassifyResult => {
+  const e = email.toLowerCase();
+  if (!e) return { status: 'pending', stage: null, value: null, dealName: null };
+  return classifyMatch(leads.get(e) || null, deals.get(e) || null)
+    || { status: 'direct_booking', stage: null, value: null, dealName: null };
 };
 
 export async function GET(request: NextRequest) {
@@ -53,13 +56,10 @@ export async function GET(request: NextRequest) {
     const dealMap = new Map<string, ZohoDeal>();
     deals.forEach(d => { if (d.Email) dealMap.set(d.Email.toLowerCase(), d); });
 
-    // STEP 2: Classify every call
-    const c: Record<Status, number> = { ordered: 0, demo_done: 0, no_show: 0, gone_cold: 0, in_pipeline: 0, direct_booking: 0, pending: 0 };
-
+    // STEP 2: Classify every call (counts done after live re-check below)
     const records = calls.map(e => {
       const email = getExternalAttendeeEmail(e);
       const m = classify(email, leadMap, dealMap);
-      c[m.status]++;
       const lead = email ? leadMap.get(email.toLowerCase()) : undefined;
       // Phone fallback chain: calendar → Zoho Mobile → Zoho Phone
       const phone = extractPhone(e) || (lead ? getLeadPhone(lead) : null);
@@ -71,6 +71,39 @@ export async function GET(request: NextRequest) {
         leadSource: lead?.Lead_Source || null,
       };
     });
+
+    // LIVE RE-CHECK: any record classified as direct_booking from the bulk
+    // 5-min cache gets a fresh per-email search against Zoho. This catches
+    // leads/deals that were added since the cache was warmed (e.g. VA added
+    // the booking to Zoho after Calendly created the call). Direct bookings
+    // are typically rare, so this stays cheap.
+    const directRecords = records.filter(r => r.status === 'direct_booking' && r.email);
+    if (directRecords.length > 0) {
+      console.log(`[Conversions] Live re-checking ${directRecords.length} direct booking(s) vs Zoho...`);
+      await Promise.all(directRecords.map(async r => {
+        const [lead, deal] = await Promise.all([
+          searchLeadByEmail(r.email),
+          searchDealByEmail(r.email),
+        ]);
+        const fresh = classifyMatch(lead, deal);
+        if (fresh) {
+          console.log(`[Conversions] ${r.email}: direct_booking → ${fresh.status} (${fresh.stage})`);
+          r.status = fresh.status;
+          r.stage = fresh.stage;
+          r.value = fresh.value;
+          r.dealName = fresh.dealName;
+          if (lead) {
+            r.leadSource = lead.Lead_Source || null;
+            if (!r.phone) r.phone = getLeadPhone(lead);
+          }
+        }
+      }));
+    }
+
+    // STEP 2b: tally statuses AFTER the live re-check so the counts reflect
+    // the post-rescue state, not the stale cache.
+    const c: Record<Status, number> = { ordered: 0, demo_done: 0, no_show: 0, gone_cold: 0, in_pipeline: 0, direct_booking: 0, pending: 0 };
+    records.forEach(r => { c[r.status]++; });
 
     // STEP 3: Derived metrics
     const totalCalls = calls.length;

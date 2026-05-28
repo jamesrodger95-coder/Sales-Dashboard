@@ -57,7 +57,16 @@ export default function DebriefForm({
   const [phone, setPhone] = useState(defaultPhone || '');
   const [country, setCountry] = useState(defaultCountry || '');
   const [frame, setFrame] = useState<Frame | null>(null);
-  const [mag, setMag] = useState<Magnification | null>(null);
+  const [mags, setMags] = useState<Magnification[]>([]);
+
+  // Toggle a magnification, capping at 2 (oldest gets dropped when a 3rd is added).
+  const toggleMag = (m: Magnification) => {
+    setMags(prev => {
+      if (prev.includes(m)) return prev.filter(x => x !== m);
+      if (prev.length >= 2) return [...prev.slice(1), m];
+      return [...prev, m];
+    });
+  };
   const [px, setPx] = useState<boolean | null>(null);
   const [headlight, setHeadlight] = useState<Headlight | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -85,7 +94,7 @@ export default function DebriefForm({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: name.trim(), email: email.trim() || null, phone: phone.trim() || null, country: country.trim() || null,
-          frame, magnification: mag, px: px === true, headlight, outcome, notes: notes.trim(),
+          frame, magnification: mags, px: px === true, headlight, outcome, notes: notes.trim(),
           followUpType: followUp || 'No Follow Up',
           followUpCustomDate: followUp === 'Custom' ? customDate : undefined,
           callDate: callDate || new Date().toISOString(),
@@ -156,9 +165,12 @@ export default function DebriefForm({
           </div>
         </div>
         <div>
-          <label className={fieldLabel}>Magnification</label>
+          <label className={fieldLabel}>
+            Magnification
+            <span className="text-dim normal-case tracking-normal ml-1.5">· up to 2</span>
+          </label>
           <div className="flex flex-wrap gap-1.5">
-            {MAGS.map(m => <Pill key={m} active={mag === m} onClick={() => setMag(m)}>{m}</Pill>)}
+            {MAGS.map(m => <Pill key={m} active={mags.includes(m)} onClick={() => toggleMag(m)}>{m}</Pill>)}
           </div>
         </div>
       </div>

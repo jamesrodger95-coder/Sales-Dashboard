@@ -16,7 +16,8 @@ export interface Debrief {
   country: string | null;
   callDate: string;
   frame: Frame | null;
-  magnification: Magnification | null;
+  /** Up to 2 magnifications selected. Legacy records may have a string here — use magsOf() to read. */
+  magnification: Magnification[];
   px: boolean;
   headlight: Headlight | null;
   outcome: Outcome | null;
@@ -29,6 +30,20 @@ export interface Debrief {
   source: 'dashboard' | 'telegram';
   reminderSent: boolean;
   nudgeSent?: boolean;
+}
+
+// Read magnification as a normalized array regardless of whether the underlying
+// record stores a string (legacy), an array, or null. Used everywhere that
+// displays / sums / formats magnification.
+export function magsOf(d: { magnification?: unknown }): Magnification[] {
+  const m = d.magnification;
+  if (Array.isArray(m)) return m.filter(Boolean) as Magnification[];
+  if (typeof m === 'string' && m) return [m as Magnification];
+  return [];
+}
+
+export function magsJoin(d: { magnification?: unknown }, sep = ' / '): string {
+  return magsOf(d).join(sep);
 }
 
 // ============================================================================
