@@ -11,6 +11,7 @@ import BriefingCard from '@/components/BriefingCard';
 import DrillDown from '@/components/DrillDown';
 import CallDebriefCard from '@/components/CallDebriefCard';
 import FollowUpList from '@/components/FollowUpList';
+import ClosingBoardSummary from '@/components/ClosingBoardSummary';
 import { CallRecord, ScheduleItem, AnalyticsData } from '@/lib/types';
 
 type SyncState = 'idle' | 'syncing' | 'synced' | 'error';
@@ -186,6 +187,9 @@ export default function Dashboard() {
 
       {/* AI Briefing card */}
       <BriefingCard />
+
+      {/* Closing Board mini-summary */}
+      <ClosingBoardSummary />
 
       {/* Debrief + follow-ups */}
       <div id="follow-ups" className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6 scroll-mt-20">

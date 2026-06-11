@@ -10,6 +10,7 @@ const navItems = [
   { href: '/calls', label: 'Calls' },
   { href: '/reports', label: 'Reports' },
   { href: '/pipeline', label: 'Pipeline' },
+  { href: '/board', label: 'Board' },
   { href: '/conversions', label: 'Conversions' },
   { href: '/analytics', label: 'Analytics' },
   { href: '/briefing', label: 'Briefing' },

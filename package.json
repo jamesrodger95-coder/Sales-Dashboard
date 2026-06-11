@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
+    "@vercel/kv": "^3.0.0",
     "date-fns": "^4.1.0",
     "next": "14.2.35",
     "react": "^18",
@@ -23,6 +24,7 @@
     "eslint": "^8",
     "eslint-config-next": "14.2.35",
     "postcss": "^8",
+    "puppeteer": "^25.1.0",
     "tailwindcss": "^3.4.1",
     "typescript": "^5"
   }

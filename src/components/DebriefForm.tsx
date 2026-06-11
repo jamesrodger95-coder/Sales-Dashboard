@@ -74,8 +74,9 @@ export default function DebriefForm({
   const [followUp, setFollowUp] = useState<FollowUpType | null>(null);
   const [customDate, setCustomDate] = useState('');
   const [pushToCrm, setPushToCrm] = useState(true);
+  const [addToBoard, setAddToBoard] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState<null | { crm: string; leadName?: string | null }>(null);
+  const [saved, setSaved] = useState<null | { crm: string; leadName?: string | null; board?: boolean }>(null);
   const [error, setError] = useState<string | null>(null);
 
   const pickPreset = (p: { name: string; email?: string; phone?: string | null; country?: string | null }) => {
@@ -106,7 +107,33 @@ export default function DebriefForm({
       if (!res.ok) {
         throw new Error(data?.error || `Server returned ${res.status}`);
       }
-      setSaved({ crm: data.crm?.status || 'skipped', leadName: data.crm?.leadName });
+      // Optionally add a card to the Closing Board. Fire-and-forget; a board
+      // failure shouldn't block the debrief save.
+      let boardOk = false;
+      if (addToBoard) {
+        try {
+          const br = await fetch('/api/board', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: name.trim(),
+              email: email.trim() || null,
+              phone: phone.trim() || null,
+              country: country.trim() || null,
+              frame,
+              magnification: mags,
+              px: px === true,
+              headlight,
+              notes: notes.trim(),
+              column: 'interested',
+              followUpDate: data.debrief?.followUpDate || null,
+              debriefId: data.debrief?.id || null,
+            }),
+          });
+          boardOk = br.ok;
+        } catch { /* ignore — debrief is saved */ }
+      }
+      setSaved({ crm: data.crm?.status || 'skipped', leadName: data.crm?.leadName, board: boardOk });
       onSaved?.({ id: data.debrief.id, crmStatus: data.crm?.status, leadName: data.crm?.leadName });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Save failed';
@@ -228,8 +255,8 @@ export default function DebriefForm({
         )}
       </div>
 
-      {/* CRM toggle */}
-      <div className="flex items-center justify-between pt-1">
+      {/* CRM + Board toggles */}
+      <div className="flex flex-col gap-2 pt-1">
         <button
           type="button"
           onClick={() => setPushToCrm(p => !p)}
@@ -239,6 +266,16 @@ export default function DebriefForm({
             <span className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${pushToCrm ? 'left-[18px] bg-white' : 'left-0.5 bg-[#555]'}`} />
           </span>
           <span className="text-xs text-muted group-hover:text-white transition-colors">Add note to CRM</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setAddToBoard(p => !p)}
+          className="flex items-center gap-2 group"
+        >
+          <span className={`relative w-9 h-5 rounded-full transition-colors ${addToBoard ? 'bg-blue-500' : 'bg-[#1A1A1A]'}`}>
+            <span className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${addToBoard ? 'left-[18px] bg-white' : 'left-0.5 bg-[#555]'}`} />
+          </span>
+          <span className="text-xs text-muted group-hover:text-white transition-colors">Add to Closing Board</span>
         </button>
       </div>
 
@@ -269,6 +306,9 @@ export default function DebriefForm({
             )}
             {saved.crm === 'not_configured' && (
               <span className="text-[11px] text-gray-500">CRM not configured</span>
+            )}
+            {saved.board && (
+              <span className="text-[11px] text-blue-400">Added to Closing Board</span>
             )}
           </div>
         )}
