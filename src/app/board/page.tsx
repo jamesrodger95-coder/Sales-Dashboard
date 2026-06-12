@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 
 type Column = 'interested' | 'quoted' | 'deciding' | 'closing';
 const COLUMNS: Column[] = ['interested', 'quoted', 'deciding', 'closing'];
@@ -134,6 +134,27 @@ export default function BoardPage() {
     } catch { load(); }
   };
 
+  const updateCard = async (id: string, patch: Partial<BoardCard>): Promise<BoardCard | null> => {
+    // Optimistic update
+    setActive(prev => prev.map(c => c.id === id ? { ...c, ...patch } : c));
+    try {
+      const res = await fetch(`/api/board/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Server returned ${res.status}`);
+      // Reconcile with server response (in case any field was normalized)
+      setActive(prev => prev.map(c => c.id === id ? data.card : c));
+      return data.card;
+    } catch (err) {
+      console.error('[Board] update failed:', err);
+      load();
+      return null;
+    }
+  };
+
   const removeCard = async (id: string) => {
     if (!confirm('Remove this card from the board?')) return;
     setActive(prev => prev.filter(c => c.id !== id));
@@ -234,6 +255,7 @@ export default function BoardPage() {
                       onWon={markWon}
                       onLost={markLost}
                       onRemove={removeCard}
+                      onUpdate={updateCard}
                     />
                   ))}
                 </div>
@@ -307,8 +329,11 @@ export default function BoardPage() {
 // ============================================================================
 // Card
 // ============================================================================
+const FRAMES = ['Rounded', 'Rectangular', 'Not Sure'] as const;
+const HEADLIGHTS = ['Ignis 4 Pro', 'Ignis 4 Lite', 'Halo', 'None'] as const;
+
 function Card({
-  card, onDragStart, onMoveTo, onWon, onLost, onRemove,
+  card, onDragStart, onMoveTo, onWon, onLost, onRemove, onUpdate,
 }: {
   card: BoardCard;
   onDragStart: (e: React.DragEvent<HTMLDivElement>, id: string) => void;
@@ -316,19 +341,27 @@ function Card({
   onWon: (id: string) => void;
   onLost: (id: string) => void;
   onRemove: (id: string) => void;
+  onUpdate: (id: string, patch: Partial<BoardCard>) => Promise<BoardCard | null>;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const meta = COLUMN_META[card.column];
-  const cfg = [card.frame, card.magnification.join(' / ') || null, card.headlight].filter(Boolean).join(' · ');
+  const cfg = useMemo(() =>
+    [card.frame, card.magnification.join(' / ') || null, card.headlight].filter(Boolean).join(' · '),
+    [card.frame, card.magnification, card.headlight],
+  );
   const fu = followUpStyle(card.followUpDate);
   const colIdx = COLUMNS.indexOf(card.column);
   const nextCol = colIdx < COLUMNS.length - 1 ? COLUMNS[colIdx + 1] : null;
   const prevCol = colIdx > 0 ? COLUMNS[colIdx - 1] : null;
 
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+
   return (
     <div
-      draggable
+      draggable={!expanded}
       onDragStart={e => onDragStart(e, card.id)}
-      className={`group relative rounded-xl bg-[#1A1A1A] border border-[#333] border-l-4 ${meta.border} p-3 cursor-grab active:cursor-grabbing hover:border-[#444] hover:shadow-lg transition-all`}
+      onClick={() => setExpanded(v => !v)}
+      className={`group relative rounded-xl bg-[#1A1A1A] border border-[#333] border-l-4 ${meta.border} p-3 ${expanded ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'} hover:border-[#444] hover:shadow-lg transition-all`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
@@ -337,7 +370,7 @@ function Card({
             {card.phone && (
               <a
                 href={`tel:${card.phone.replace(/\s/g, '')}`}
-                onClick={e => e.stopPropagation()}
+                onClick={stop}
                 className="text-[11px] text-muted hover:text-white font-mono tabular-nums truncate"
               >{card.phone}</a>
             )}
@@ -345,51 +378,210 @@ function Card({
             {card.px && <span className="text-[9px] px-1.5 py-0.5 rounded bg-data-blue/20 text-data-blue font-semibold">PX</span>}
           </div>
         </div>
+        <span className="text-[10px] text-dim opacity-0 group-hover:opacity-100 transition shrink-0">{expanded ? '▴' : '▾'}</span>
       </div>
 
       {cfg && <p className="text-[11px] text-muted mt-1.5 truncate">{cfg}</p>}
-      {card.notes && <p className="text-[11px] text-dim italic mt-1 line-clamp-2">&ldquo;{card.notes}&rdquo;</p>}
+      {card.notes && !expanded && <p className="text-[11px] text-dim italic mt-1 line-clamp-2">&ldquo;{card.notes}&rdquo;</p>}
 
-      {fu && (
+      {fu && !expanded && (
         <span className={`mt-2 inline-block text-[10px] px-2 py-0.5 rounded-full border ${fu.cls}`}>{fu.text}</span>
       )}
 
-      <div className="mt-2 flex items-center justify-between gap-2">
-        <span className="text-[10px] text-dim">Added {daysAgo(card.addedAt)}</span>
-        <div className="flex items-center gap-1">
-          {/* Quick column nav for touch */}
-          {prevCol && (
-            <button
-              onClick={e => { e.stopPropagation(); onMoveTo(card.id, prevCol); }}
-              title={`Move to ${COLUMN_META[prevCol].label}`}
-              className="w-6 h-6 rounded-md border border-[#333] text-dim hover:text-white hover:border-[#555]"
-            >‹</button>
-          )}
-          {nextCol && (
-            <button
-              onClick={e => { e.stopPropagation(); onMoveTo(card.id, nextCol); }}
-              title={`Move to ${COLUMN_META[nextCol].label}`}
-              className="w-6 h-6 rounded-md border border-[#333] text-dim hover:text-white hover:border-[#555]"
-            >›</button>
-          )}
+      {!expanded && (
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <span className="text-[10px] text-dim">Added {daysAgo(card.addedAt)}</span>
+          <div className="flex items-center gap-1">
+            {prevCol && (
+              <button
+                onClick={e => { stop(e); onMoveTo(card.id, prevCol); }}
+                title={`Move to ${COLUMN_META[prevCol].label}`}
+                className="w-6 h-6 rounded-md border border-[#333] text-dim hover:text-white hover:border-[#555]"
+              >‹</button>
+            )}
+            {nextCol && (
+              <button
+                onClick={e => { stop(e); onMoveTo(card.id, nextCol); }}
+                title={`Move to ${COLUMN_META[nextCol].label}`}
+                className="w-6 h-6 rounded-md border border-[#333] text-dim hover:text-white hover:border-[#555]"
+              >›</button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Hover-revealed action row */}
-      <div className="mt-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+      {/* Hover-revealed action row (also visible while expanded) */}
+      <div className={`mt-2 flex items-center gap-1 ${expanded ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition`}>
         <button
-          onClick={e => { e.stopPropagation(); onWon(card.id); }}
+          onClick={e => { stop(e); onWon(card.id); }}
           className="flex-1 text-[10px] px-2 py-1 rounded-md border border-emerald-400/30 text-emerald-400 hover:bg-emerald-400/10"
         >Won</button>
         <button
-          onClick={e => { e.stopPropagation(); onLost(card.id); }}
+          onClick={e => { stop(e); onLost(card.id); }}
           className="flex-1 text-[10px] px-2 py-1 rounded-md border border-red-400/30 text-red-400 hover:bg-red-400/10"
         >Lost</button>
         <button
-          onClick={e => { e.stopPropagation(); onRemove(card.id); }}
+          onClick={e => { stop(e); onRemove(card.id); }}
           title="Remove from board (not won/lost)"
           className="text-[10px] px-2 py-1 rounded-md border border-[#222] text-dim hover:text-white"
         >Remove</button>
+      </div>
+
+      {/* Inline editor */}
+      {expanded && (
+        <CardEditor
+          card={card}
+          onUpdate={onUpdate}
+          onClose={() => setExpanded(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// CardEditor — inline form, all fields optional
+// ============================================================================
+function CardEditor({
+  card, onUpdate, onClose,
+}: {
+  card: BoardCard;
+  onUpdate: (id: string, patch: Partial<BoardCard>) => Promise<BoardCard | null>;
+  onClose: () => void;
+}) {
+  const [frame, setFrame] = useState<BoardCard['frame']>(card.frame);
+  const [mags, setMags] = useState<string[]>(card.magnification || []);
+  // Tri-state in the editor: explicit Yes, explicit No, or unset. The card's
+  // px is stored as a boolean, so we treat false as "unset" by default — a
+  // card from a quick + Board add wasn't actually asked the PX question.
+  const [px, setPx] = useState<boolean | null>(card.px === true ? true : null);
+  const [headlight, setHeadlight] = useState<BoardCard['headlight']>(card.headlight);
+  const [notes, setNotes] = useState(card.notes || '');
+  const [followUpDate, setFollowUpDate] = useState(card.followUpDate || '');
+  const [value, setValue] = useState(card.value != null ? String(card.value) : '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggleMag = (m: string) => {
+    setMags(prev => prev.includes(m) ? prev.filter(x => x !== m) : prev.length >= 2 ? [...prev.slice(1), m] : [...prev, m]);
+  };
+
+  const toggleFrame = (f: BoardCard['frame']) => setFrame(prev => prev === f ? null : f);
+  const toggleHeadlight = (h: BoardCard['headlight']) => setHeadlight(prev => prev === h ? null : h);
+
+  const save = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSaving(true);
+    setError(null);
+    try {
+      const patch: Partial<BoardCard> = {
+        frame,
+        magnification: mags as BoardCard['magnification'],
+        // px tri-state: false when explicitly set, null/undefined when unset
+        px: px === true,
+        headlight,
+        notes: notes.trim(),
+        followUpDate: followUpDate || null,
+        value: value ? Number(value) : null,
+      };
+      const updated = await onUpdate(card.id, patch);
+      if (updated) onClose();
+      else setError('Save failed');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const Pill = ({ active, onClick, children }: { active: boolean; onClick: (e: React.MouseEvent) => void; children: React.ReactNode }) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-2 py-1 rounded-full text-[10px] font-medium border transition ${
+        active ? 'bg-white text-black border-white' : 'border-[#333] text-gray-400 hover:border-[#444] hover:text-white'
+      }`}
+    >{children}</button>
+  );
+
+  return (
+    <div onClick={e => e.stopPropagation()} className="mt-3 pt-3 border-t border-[#222] space-y-3">
+      <div>
+        <label className="text-[9px] tracking-[0.15em] uppercase text-dim mb-1.5 block">Frame</label>
+        <div className="flex flex-wrap gap-1">
+          {FRAMES.map(f => <Pill key={f} active={frame === f} onClick={e => { e.stopPropagation(); toggleFrame(f); }}>{f}</Pill>)}
+        </div>
+      </div>
+
+      <div>
+        <label className="text-[9px] tracking-[0.15em] uppercase text-dim mb-1.5 block">Magnification <span className="normal-case tracking-normal text-dim">· up to 2</span></label>
+        <div className="flex flex-wrap gap-1">
+          {MAGS.map(m => <Pill key={m} active={mags.includes(m)} onClick={e => { e.stopPropagation(); toggleMag(m); }}>{m}</Pill>)}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-[9px] tracking-[0.15em] uppercase text-dim mb-1.5 block">PX</label>
+          <div className="flex gap-1">
+            <Pill active={px === true} onClick={e => { e.stopPropagation(); setPx(px === true ? null : true); }}>Yes</Pill>
+            <Pill active={px === false} onClick={e => { e.stopPropagation(); setPx(px === false ? null : false); }}>No</Pill>
+          </div>
+        </div>
+        <div>
+          <label className="text-[9px] tracking-[0.15em] uppercase text-dim mb-1.5 block">Value (£)</label>
+          <input
+            value={value}
+            onChange={e => setValue(e.target.value.replace(/[^\d.]/g, ''))}
+            onClick={e => e.stopPropagation()}
+            placeholder="—"
+            className="w-full bg-[#0A0A0A] border border-[#222] rounded-md px-2 py-1 text-xs text-white placeholder:text-dim outline-none focus:border-[#444] tabular-nums"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="text-[9px] tracking-[0.15em] uppercase text-dim mb-1.5 block">Headlight</label>
+        <div className="flex flex-wrap gap-1">
+          {HEADLIGHTS.map(h => <Pill key={h} active={headlight === h} onClick={e => { e.stopPropagation(); toggleHeadlight(h); }}>{h}</Pill>)}
+        </div>
+      </div>
+
+      <div>
+        <label className="text-[9px] tracking-[0.15em] uppercase text-dim mb-1.5 block">Notes</label>
+        <textarea
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+          onClick={e => e.stopPropagation()}
+          rows={2}
+          placeholder="Anything to remember..."
+          className="w-full bg-[#0A0A0A] border border-[#222] rounded-md px-2 py-1.5 text-xs text-white placeholder:text-dim outline-none focus:border-[#444] resize-none"
+        />
+      </div>
+
+      <div>
+        <label className="text-[9px] tracking-[0.15em] uppercase text-dim mb-1.5 block">Follow-up date</label>
+        <input
+          type="date"
+          value={followUpDate}
+          onChange={e => setFollowUpDate(e.target.value)}
+          onClick={e => e.stopPropagation()}
+          className="bg-[#0A0A0A] border border-[#222] rounded-md px-2 py-1 text-xs text-white outline-none focus:border-[#444]"
+        />
+      </div>
+
+      {error && <div className="px-2 py-1 rounded-md bg-red-500/10 border border-red-500/30 text-[11px] text-red-400">{error}</div>}
+
+      <div className="flex items-center gap-2">
+        <button
+          onClick={save}
+          disabled={saving}
+          className="flex-1 px-3 py-1.5 rounded-md bg-white text-black text-xs font-semibold disabled:opacity-30 hover:bg-white/90 transition"
+        >{saving ? 'Saving...' : 'Save'}</button>
+        <button
+          onClick={e => { e.stopPropagation(); onClose(); }}
+          className="px-3 py-1.5 rounded-md text-xs text-dim hover:text-white"
+        >Cancel</button>
       </div>
     </div>
   );

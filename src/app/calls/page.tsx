@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import DebriefForm from '@/components/DebriefForm';
+import AddToBoardButton from '@/components/AddToBoardButton';
+import Toast from '@/components/Toast';
 
 type Status = 'ordered' | 'demo_done' | 'no_show' | 'gone_cold' | 'in_pipeline' | 'direct_booking' | 'pending';
 
@@ -48,6 +50,8 @@ export default function CallsPage() {
   const [selectedMonth, setSelectedMonth] = useState(0);
   const [calls, setCalls] = useState<CallRecord[]>([]);
   const [debriefsByEmail, setDebriefsByEmail] = useState<Record<string, { id: string; frame: string | null; magnification: string | string[] | null; px: boolean; headlight: string | null; outcome: string | null; notes: string }>>({});
+  const [boardEmails, setBoardEmails] = useState<Set<string>>(new Set());
+  const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
@@ -64,9 +68,10 @@ export default function CallsPage() {
       const m = months[selectedMonth];
       // Run independently — debriefs may not exist on first load and we don't want
       // a debriefs failure to wipe the calls list (the original "zero" bug).
-      const [convResSettled, debResSettled] = await Promise.allSettled([
+      const [convResSettled, debResSettled, boardResSettled] = await Promise.allSettled([
         fetch(`/api/conversions?year=${m.year}&month=${m.month}`).then(r => r.json()),
         fetch('/api/debriefs').then(r => r.json()),
+        fetch('/api/board').then(r => r.json()),
       ]);
       // Cancellation guard: discard if a newer fetch is in flight
       if (myId !== requestIdRef.current) return;
@@ -85,6 +90,13 @@ export default function CallsPage() {
         });
       }
       setDebriefsByEmail(map);
+
+      if (boardResSettled.status === 'fulfilled') {
+        const cards = boardResSettled.value?.cards || [];
+        const emails = new Set<string>();
+        for (const c of cards) if (c.email) emails.add(String(c.email).toLowerCase());
+        setBoardEmails(emails);
+      }
     } catch {
       if (myId === requestIdRef.current) {
         setCalls([]);
@@ -249,10 +261,20 @@ export default function CallsPage() {
                     </td>
                     <td className="py-3 text-dim hidden sm:table-cell">{call.country || '--'}</td>
                     <td className="py-3 hidden md:table-cell">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${pill.bg} ${pill.color}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full bg-current`} />
-                        {pillLabel}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${pill.bg} ${pill.color}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full bg-current`} />
+                          {pillLabel}
+                        </span>
+                        <AddToBoardButton
+                          call={{ name: call.name, email: call.email, phone: call.phone, country: call.country }}
+                          isOnBoard={!!call.email && boardEmails.has(call.email.toLowerCase())}
+                          onAdded={c => {
+                            if (c.email) setBoardEmails(prev => new Set(prev).add(c.email!.toLowerCase()));
+                            setToast(`Added ${c.name} to Closing Board`);
+                          }}
+                        />
+                      </div>
                     </td>
                     <td className="py-3 pr-6 hidden md:table-cell">
                       {debrief ? (
@@ -326,6 +348,8 @@ export default function CallsPage() {
           <span>{months[selectedMonth].label}</span>
         </div>
       )}
+
+      <Toast message={toast} onClose={() => setToast(null)} />
     </div>
   );
 }

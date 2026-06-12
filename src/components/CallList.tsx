@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { CallRecord } from '@/lib/types';
 import DebriefForm from './DebriefForm';
+import AddToBoardButton from './AddToBoardButton';
+import Toast from './Toast';
 
 interface CallListProps {
   calls: CallRecord[];
@@ -34,6 +36,8 @@ function magText(m: string | string[] | null | undefined, sep = ' / '): string |
 export default function CallList({ calls, loading }: CallListProps) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [debriefsByEmail, setDebriefsByEmail] = useState<Record<string, DebriefSummary>>({});
+  const [boardEmails, setBoardEmails] = useState<Set<string>>(new Set());
+  const [toast, setToast] = useState<string | null>(null);
 
   const loadDebriefs = useCallback(async () => {
     try {
@@ -46,7 +50,16 @@ export default function CallList({ calls, loading }: CallListProps) {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { loadDebriefs(); }, [loadDebriefs]);
+  const loadBoardEmails = useCallback(async () => {
+    try {
+      const data = await fetch('/api/board').then(r => r.json());
+      const emails = new Set<string>();
+      for (const c of data.cards || []) if (c.email) emails.add(String(c.email).toLowerCase());
+      setBoardEmails(emails);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { loadDebriefs(); loadBoardEmails(); }, [loadDebriefs, loadBoardEmails]);
 
   if (loading) {
     return (
@@ -129,15 +142,26 @@ export default function CallList({ calls, loading }: CallListProps) {
                     {new Date(call.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
                   </td>
                   <td className="py-3 text-dim text-xs hidden sm:table-cell">{call.country || '--'}</td>
-                  <td className="py-3 pr-6 hidden md:table-cell">
-                    {debrief ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-400/10 text-emerald-400">
-                        <span className="w-1 h-1 rounded-full bg-current" />
-                        Notes
-                      </span>
-                    ) : (
-                      <span className="text-[10px] text-dim">log →</span>
-                    )}
+                  <td className="py-3 pr-6 hidden md:table-cell" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center gap-2">
+                      {debrief ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-400/10 text-emerald-400">
+                          <span className="w-1 h-1 rounded-full bg-current" />
+                          Notes
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-dim">log →</span>
+                      )}
+                      <AddToBoardButton
+                        size="xs"
+                        call={{ name: call.name, email: call.email, phone: call.phone, country: call.country }}
+                        isOnBoard={!!call.email && boardEmails.has(call.email.toLowerCase())}
+                        onAdded={c => {
+                          if (c.email) setBoardEmails(prev => new Set(prev).add(c.email!.toLowerCase()));
+                          setToast(`Added ${c.name} to Closing Board`);
+                        }}
+                      />
+                    </div>
                   </td>
                 </tr>
                 {isOpen && (
@@ -176,6 +200,7 @@ export default function CallList({ calls, loading }: CallListProps) {
           })}
         </tbody>
       </table>
+      <Toast message={toast} onClose={() => setToast(null)} />
     </div>
   );
 }
