@@ -1,10 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import TopNav from "@/components/TopNav";
-import SplashScreen from "@/components/SplashScreen";
-import ChatAssistant from "@/components/ChatAssistant";
-import JarvisMode from "@/components/JarvisMode";
-import QuickLog from "@/components/QuickLog";
+import SalesChrome from "@/components/SalesChrome";
 
 export const metadata: Metadata = {
   title: "Bryant Dental — Sales Intelligence",
@@ -19,14 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="antialiased min-h-screen">
-        <SplashScreen />
-        <TopNav />
-        <main className="pt-14 min-h-screen">
-          {children}
-        </main>
-        <ChatAssistant />
-        <JarvisMode />
-        <QuickLog />
+        <SalesChrome>{children}</SalesChrome>
       </body>
     </html>
   );
