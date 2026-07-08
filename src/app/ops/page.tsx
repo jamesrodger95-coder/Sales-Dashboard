@@ -97,17 +97,23 @@ export default function OpsHome() {
 
   // Post-delivery: for each dispatched deal (proxy: stage moved to Dispatched at Modified_Time)
   const deliveryDb = data?.delivery || {};
-  const forStage = (fromWeek: number, toWeek: number, key: 'week1' | 'week8' | 'week16' | 'week20') =>
+  // Match the /ops/post-delivery ranges exactly: week1 in days (3–10), the rest
+  // in weeks. Widened week8 window from 7–9 to 6–10 per spec.
+  const forWeekBucket = (fromWeek: number, toWeek: number, key: 'week8' | 'week16' | 'week20' | 'week24') =>
     dispatched.filter(d => {
       const weeks = weeksSince(deliveryDb[d.id]?.dispatchedAt || d.Modified_Time);
       const done = deliveryDb[d.id]?.entries[key]?.sent === true;
       return weeks >= fromWeek && weeks <= toWeek && !done;
     });
-
-  const dueDelivery = forStage(0, 2, 'week1');
-  const dueFit      = forStage(6, 10, 'week8');
-  const dueReview   = forStage(14, 18, 'week16');
-  const dueReferral = forStage(19, 24, 'week20');
+  const dueOnboarding = dispatched.filter(d => {
+    const days = daysSince(deliveryDb[d.id]?.dispatchedAt || d.Modified_Time);
+    const done = deliveryDb[d.id]?.entries.week1?.sent === true;
+    return days >= 3 && days <= 10 && !done;
+  });
+  const dueFit      = forWeekBucket(6, 10, 'week8');
+  const dueReview   = forWeekBucket(15, 17, 'week16');
+  const dueReferral = forWeekBucket(19, 21, 'week20');
+  const dueFollowUp = forWeekBucket(23, 25, 'week24');
 
   // Action items today — highest-priority items from each area, capped at 8
   interface Action { tone: 'bad' | 'warn' | 'good'; text: string; href: string }
@@ -186,13 +192,14 @@ export default function OpsHome() {
         <Link href="/ops/post-delivery" className="group rounded-2xl border border-[#1A1A1A] bg-surface p-5 hover:border-emerald-400/30 transition-colors">
           <h2 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-400 mb-4">Post-Delivery</h2>
           <div className="grid grid-cols-2 gap-4 mb-3">
-            <StatChip label="Delivery checks" value={dueDelivery.length} tone="default" sub="week 1 due" />
+            <StatChip label="Onboarding" value={dueOnboarding.length} tone="default" sub="week 1 due" />
             <StatChip label="Fit checks" value={dueFit.length} tone="default" sub="week 8 due" />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-4 mb-3">
             <StatChip label="Review asks" value={dueReview.length} tone="default" sub="week 16 due" />
             <StatChip label="Referral asks" value={dueReferral.length} tone="default" sub="week 20 due" />
           </div>
+          <p className="text-[11px] text-dim">Follow-ups (week 24): <span className="text-white font-semibold tabular-nums">{dueFollowUp.length}</span></p>
           <span className="mt-3 block text-[11px] text-dim group-hover:text-emerald-300 transition-colors">Open →</span>
         </Link>
       </div>

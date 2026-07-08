@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ZohoDeal } from '@/lib/zoho-client';
-import { DELIVERY_SCHEDULE, DeliverySchedulePoint, DeliveryMilestones } from '@/lib/ops-schedules';
+import { DELIVERY_SCHEDULE, DeliverySchedulePoint, DeliveryMilestones, DeliveryWeekKey } from '@/lib/ops-schedules';
 import WhatsAppLink from '@/components/ops/WhatsAppLink';
 import WhatsAppButton from '@/components/ops/WhatsAppButton';
 import CopyButton from '@/components/ops/CopyButton';
@@ -10,11 +10,17 @@ import { daysSince, dealCustomerName, extractFirstName, mailtoHref, weeksSince }
 
 const DISPATCHED_STAGES = ['Order Dispatched to Customer', 'Order Arrived'];
 
-// Which schedule point a deal is currently "on" — the earliest week key
-// whose milestone hasn't been sent yet, if any.
-function currentPoint(entries: Record<string, { sent: boolean }>): DeliverySchedulePoint | null {
-  return DELIVERY_SCHEDULE.find(p => !entries[p.key]?.sent) || null;
-}
+// Windows for each milestone — used by both "Due now" and "Overdue" bucketing.
+// week1 is expressed in days; the rest in whole weeks.
+const RANGE_DAYS: Record<'week1', [number, number]> = { week1: [3, 10] };
+const RANGE_WEEKS: Record<Exclude<DeliveryWeekKey, 'week1'>, [number, number]> = {
+  week8:  [6, 10],  // widened per spec — original 7–9 was showing zero cards
+  week16: [15, 17],
+  week20: [19, 21],
+  week24: [23, 25],
+};
+
+const OVERDUE_WINDOW_WEEKS = 4;
 
 interface State {
   deals: ZohoDeal[];
@@ -32,8 +38,7 @@ function productName(d: ZohoDeal) {
 }
 
 // Modal shown after clicking a send button. Confirms the email was actually
-// sent before we mark the milestone. Prevents accidental clicks from advancing
-// the record.
+// sent before we mark the milestone.
 function ConfirmModal({
   open, deal, point, onClose, onConfirm,
 }: {
@@ -70,6 +75,8 @@ export default function PostDeliveryPage() {
   const [confirmFor, setConfirmFor] = useState<{ deal: ZohoDeal; point: DeliverySchedulePoint } | null>(null);
   const [completedOpen, setCompletedOpen] = useState(false);
   const [missedOpen, setMissedOpen] = useState(false);
+  // Only log the debug distribution once per real fetch (not on every render)
+  const debugLoggedRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     setState(s => ({ ...s, error: null }));
@@ -78,7 +85,39 @@ export default function PostDeliveryPage() {
       const res = await fetch(url);
       const j = await res.json();
       if (!res.ok) throw new Error(j?.error || `Server ${res.status}`);
-      setState({ deals: j.deals || [], delivery: j.delivery || {}, lastSync: new Date(), loading: false, error: null });
+      const deals: ZohoDeal[] = j.deals || [];
+      const delivery: Record<string, DeliveryMilestones> = j.delivery || {};
+      setState({ deals, delivery, lastSync: new Date(), loading: false, error: null });
+
+      // Debug: dump the weeks-since-dispatch distribution and 10 sample rows.
+      // Fingerprint prevents re-logging on 5-minute auto-refreshes if nothing changed.
+      const fp = `${deals.length}:${deals.map(d => d.Modified_Time?.slice(0, 10)).slice(0, 5).join(',')}`;
+      if (typeof window !== 'undefined' && debugLoggedRef.current !== fp) {
+        debugLoggedRef.current = fp;
+        const now = Date.now();
+        const dist: Record<string, number> = { '0-4w': 0, '5-9w': 0, '10-15w': 0, '16-24w': 0, '25w+': 0 };
+        const dispatched = deals.filter(d => DISPATCHED_STAGES.includes(d.Stage));
+        const rows = dispatched.map(d => {
+          const dispatchedAt = delivery[d.id]?.dispatchedAt || d.Modified_Time;
+          const weeks = dispatchedAt ? Math.floor((now - new Date(dispatchedAt).getTime()) / (7 * 86400000)) : 0;
+          if (weeks <= 4) dist['0-4w']++;
+          else if (weeks <= 9) dist['5-9w']++;
+          else if (weeks <= 15) dist['10-15w']++;
+          else if (weeks <= 24) dist['16-24w']++;
+          else dist['25w+']++;
+          return {
+            name: dealCustomerName(d),
+            stage: d.Stage,
+            modified: (d.Modified_Time || '').slice(0, 10),
+            weeks,
+          };
+        });
+        console.log(`[post-delivery] ${dispatched.length} dispatched deal(s) · weeks-since-dispatch:`, dist);
+        console.log('[post-delivery] first 10 samples:', rows.slice(0, 10));
+        // Also log any deals that WOULD match the fit-check window with the new range
+        const fitCandidates = rows.filter(r => r.weeks >= 6 && r.weeks <= 10);
+        console.log(`[post-delivery] fit-check window (6-10w) candidates: ${fitCandidates.length}`, fitCandidates.slice(0, 10));
+      }
     } catch (err) {
       setState(s => ({ ...s, loading: false, error: err instanceof Error ? err.message : 'Failed' }));
     }
@@ -90,7 +129,7 @@ export default function PostDeliveryPage() {
     return () => clearInterval(t);
   }, [load]);
 
-  const markSent = useCallback(async (dealId: string, weekKey: 'week1' | 'week8' | 'week16' | 'week20', dispatchedAt: string) => {
+  const markSent = useCallback(async (dealId: string, weekKey: DeliveryWeekKey, dispatchedAt: string) => {
     setState(s => ({
       ...s,
       delivery: {
@@ -114,26 +153,24 @@ export default function PostDeliveryPage() {
     }
   }, [load]);
 
+  // Patches for the two independent flags. Either field can be toggled without
+  // touching the other — the checkboxes in the UI are independent per the spec.
   const patchFlags = useCallback(async (
     dealId: string,
-    patch: { fitCallDone?: boolean; customerHappy?: boolean | null; dispatchedAt?: string },
+    patch: { fitCallDone?: boolean; customerHappy?: boolean; dispatchedAt?: string },
   ) => {
     setState(s => {
       const prev = s.delivery[dealId] || { dealId, entries: {} };
       const next: DeliveryMilestones = { ...prev };
       if (patch.dispatchedAt && !next.dispatchedAt) next.dispatchedAt = patch.dispatchedAt;
       if (patch.fitCallDone !== undefined) {
-        if (patch.fitCallDone) {
-          next.fitCallDone = true;
-          if (!next.fitCallDate) next.fitCallDate = new Date().toISOString();
-        } else {
-          next.fitCallDone = false;
-          next.fitCallDate = undefined;
-          next.customerHappy = undefined;
-        }
+        next.fitCallDone = patch.fitCallDone;
+        // Stamp the fit-call date on first-tick only; unticking clears it.
+        if (patch.fitCallDone && !next.fitCallDate) next.fitCallDate = new Date().toISOString();
+        if (!patch.fitCallDone) next.fitCallDate = undefined;
       }
       if (patch.customerHappy !== undefined) {
-        next.customerHappy = patch.customerHappy === null ? undefined : !!patch.customerHappy;
+        next.customerHappy = patch.customerHappy;
       }
       return { ...s, delivery: { ...s.delivery, [dealId]: next } };
     });
@@ -151,65 +188,68 @@ export default function PostDeliveryPage() {
 
   const dispatched = state.deals.filter(d => DISPATCHED_STAGES.includes(d.Stage));
 
-  // Bucketing math shared across sections. weeks = weeks since dispatch.
-  const dealAge = (d: ZohoDeal): { weeks: number; dispatchedAt: string | null } => {
+  const dealAge = (d: ZohoDeal): { weeks: number; days: number; dispatchedAt: string | null } => {
     const dispatchedAt = state.delivery[d.id]?.dispatchedAt || d.Modified_Time || null;
-    return { weeks: weeksSince(dispatchedAt), dispatchedAt };
+    return { weeks: weeksSince(dispatchedAt), days: daysSince(dispatchedAt), dispatchedAt };
   };
-  const isSent = (d: ZohoDeal, key: DeliverySchedulePoint['key']) =>
+  const isSent = (d: ZohoDeal, key: DeliveryWeekKey) =>
     state.delivery[d.id]?.entries[key]?.sent === true;
 
-  // "Due now" — dispatched within +/- 1 week of the target milestone AND not sent.
-  // Spec: week1 3–10 days, week8 7–9 weeks, week16 15–17 weeks, week20 19–21 weeks.
+  // "Due now" buckets. week1 uses days, everything else uses weeks.
   const dueWeek1 = dispatched.filter(d => {
     if (isSent(d, 'week1')) return false;
-    const days = daysSince(state.delivery[d.id]?.dispatchedAt || d.Modified_Time);
-    return days >= 3 && days <= 10;
+    const { days } = dealAge(d);
+    const [min, max] = RANGE_DAYS.week1;
+    return days >= min && days <= max;
   });
-  const dueBucket = (
-    key: DeliverySchedulePoint['key'], min: number, max: number,
-  ) => dispatched.filter(d => {
-    if (isSent(d, key)) return false;
-    const { weeks } = dealAge(d);
-    return weeks >= min && weeks <= max;
-  });
-  const dueFit      = dueBucket('week8', 7, 9);
-  const dueReview   = dueBucket('week16', 15, 17);
-  const dueReferral = dueBucket('week20', 19, 21);
+  const dueBucket = (key: Exclude<DeliveryWeekKey, 'week1'>) => {
+    const [min, max] = RANGE_WEEKS[key];
+    return dispatched.filter(d => {
+      if (isSent(d, key)) return false;
+      const { weeks } = dealAge(d);
+      return weeks >= min && weeks <= max;
+    });
+  };
+  const dueFit       = dueBucket('week8');
+  const dueReview    = dueBucket('week16');
+  const dueReferral  = dueBucket('week20');
+  const dueFollowUp  = dueBucket('week24');
 
-  // Overdue — past due window AND not sent, up to 4 weeks late. Grouped by
-  // milestone key. Anything > 4 weeks late lands in the collapsed "Missed" section.
-  interface OverdueRow { deal: ZohoDeal; point: DeliverySchedulePoint; weeks: number; late: number }
+  // Weeks-past-window helper — negative when still upcoming.
+  const weeksLateForPoint = (d: ZohoDeal, key: DeliveryWeekKey): number => {
+    const { weeks, days } = dealAge(d);
+    if (key === 'week1') {
+      const [, maxDays] = RANGE_DAYS.week1;
+      return Math.max(0, Math.floor((days - maxDays) / 7));
+    }
+    const [, maxWeeks] = RANGE_WEEKS[key as Exclude<DeliveryWeekKey, 'week1'>];
+    return weeks - maxWeeks;
+  };
+
+  // Overdue — past due window AND not sent, up to 4 weeks late. Anything > 4
+  // weeks late lands in the Missed section (collapsed).
+  interface OverdueRow { deal: ZohoDeal; point: DeliverySchedulePoint; late: number }
   const overdue: OverdueRow[] = [];
   const missed: OverdueRow[] = [];
-  const OVERDUE_WINDOW_WEEKS = 4;
-  const rangeFor: Record<DeliverySchedulePoint['key'], [number, number]> = {
-    week1: [0, 1],
-    week8: [7, 9],
-    week16: [15, 17],
-    week20: [19, 21],
-  };
   for (const d of dispatched) {
-    const { weeks } = dealAge(d);
     for (const point of DELIVERY_SCHEDULE) {
       if (isSent(d, point.key)) continue;
-      const [, max] = rangeFor[point.key];
-      if (weeks <= max) continue; // still upcoming or in due-now window
-      const late = weeks - max;
-      const row: OverdueRow = { deal: d, point, weeks, late };
+      const late = weeksLateForPoint(d, point.key);
+      if (late <= 0) continue; // still upcoming or currently in due-now window
+      const row: OverdueRow = { deal: d, point, late };
       if (late <= OVERDUE_WINDOW_WEEKS) overdue.push(row);
       else missed.push(row);
-      // Only surface the first missed milestone per deal in each bucket to avoid duplication
+      // Only surface the first missed milestone per deal
       break;
     }
   }
   overdue.sort((a, b) => b.late - a.late);
   missed.sort((a, b) => b.late - a.late);
 
-  // Completed: all four milestones sent
+  // Completed: all FIVE milestones sent.
   const completed = dispatched.filter(d => {
     const e = state.delivery[d.id]?.entries || {};
-    return e.week1?.sent && e.week8?.sent && e.week16?.sent && e.week20?.sent;
+    return e.week1?.sent && e.week8?.sent && e.week16?.sent && e.week20?.sent && e.week24?.sent;
   });
 
   const openMailto = (deal: ZohoDeal, point: DeliverySchedulePoint) => {
@@ -239,6 +279,7 @@ export default function PostDeliveryPage() {
         <span>Fit: <span className="text-white font-semibold tabular-nums">{dueFit.length}</span></span>
         <span>Review: <span className="text-white font-semibold tabular-nums">{dueReview.length}</span></span>
         <span>Referral: <span className="text-white font-semibold tabular-nums">{dueReferral.length}</span></span>
+        <span>Follow-up: <span className="text-white font-semibold tabular-nums">{dueFollowUp.length}</span></span>
         <span className="text-[#333]">·</span>
         <span className="text-red-400">Overdue: <span className="tabular-nums">{overdue.length}</span></span>
         <span className="text-dim">Missed: <span className="tabular-nums">{missed.length}</span></span>
@@ -263,7 +304,7 @@ export default function PostDeliveryPage() {
             ))}
           </Section>
 
-          <Section title="Due now — Fit Check" subtitle="7–9 weeks in · how's the fit?" count={dueFit.length} tone="warn">
+          <Section title="Due now — Fit Check" subtitle="6–10 weeks in · how's the fit?" count={dueFit.length} tone="warn">
             {dueFit.map(d => (
               <DeliveryCard key={d.id} deal={d} milestones={state.delivery[d.id]} point={DELIVERY_SCHEDULE[1]} onSend={openMailto} onPatchFlags={patchFlags} />
             ))}
@@ -278,6 +319,12 @@ export default function PostDeliveryPage() {
           <Section title="Due now — Referral Ask" subtitle="19–21 weeks in · any colleagues interested?" count={dueReferral.length} tone="warn">
             {dueReferral.map(d => (
               <DeliveryCard key={d.id} deal={d} milestones={state.delivery[d.id]} point={DELIVERY_SCHEDULE[3]} onSend={openMailto} onPatchFlags={patchFlags} />
+            ))}
+          </Section>
+
+          <Section title="Due now — Review & Referral Follow-Up" subtitle="23–25 weeks in · 6-month check-in" count={dueFollowUp.length} tone="warn">
+            {dueFollowUp.map(d => (
+              <DeliveryCard key={d.id} deal={d} milestones={state.delivery[d.id]} point={DELIVERY_SCHEDULE[4]} onSend={openMailto} onPatchFlags={patchFlags} />
             ))}
           </Section>
 
@@ -314,13 +361,13 @@ export default function PostDeliveryPage() {
           {/* Completed — collapsed by default */}
           <CollapsibleSection
             title={`Completed (${completed.length})`}
-            subtitle="All four milestones sent"
+            subtitle="All five milestones sent"
             open={completedOpen}
             onToggle={() => setCompletedOpen(o => !o)}
             tone="good"
           >
             {completed.length === 0 ? (
-              <p className="text-xs text-dim italic py-3">Nobody has all four milestones done yet.</p>
+              <p className="text-xs text-dim italic py-3">Nobody has all five milestones done yet.</p>
             ) : (
               <div className="space-y-1">
                 {completed.map(d => (
@@ -410,7 +457,7 @@ function DeliveryCard({
   milestones: DeliveryMilestones | undefined;
   point: DeliverySchedulePoint;
   onSend: (deal: ZohoDeal, point: DeliverySchedulePoint) => void;
-  onPatchFlags: (dealId: string, patch: { fitCallDone?: boolean; customerHappy?: boolean | null; dispatchedAt?: string }) => void;
+  onPatchFlags: (dealId: string, patch: { fitCallDone?: boolean; customerHappy?: boolean; dispatchedAt?: string }) => void;
 }) {
   const name = dealCustomerName(deal);
   const dispatchedAt = milestones?.dispatchedAt || deal.Modified_Time;
@@ -419,25 +466,18 @@ function DeliveryCard({
   const dispatchedOn = dispatchedAt ? new Date(dispatchedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'unknown';
   const entries = milestones?.entries || {};
 
-  // Range for the current point — so we can compute "how late" if we're past it.
-  const rangeFor: Record<DeliverySchedulePoint['key'], [number, number]> = {
-    week1: [0, 1],
-    week8: [7, 9],
-    week16: [15, 17],
-    week20: [19, 21],
-  };
-  const [, max] = rangeFor[point.key];
-  const overdueWeeks = Math.max(0, weeks - max);
+  // Max of the current point's window — used to work out "how late".
+  const rangeMax = point.key === 'week1' ? Math.ceil(RANGE_DAYS.week1[1] / 7) : RANGE_WEEKS[point.key as Exclude<DeliveryWeekKey, 'week1'>][1];
+  const overdueWeeks = Math.max(0, weeks - rangeMax);
   const overdue = overdueWeeks > 0;
 
-  // Fit-call state
+  // Independent flag state — both checkboxes render regardless of the other's state.
   const fitCallDone = milestones?.fitCallDone === true;
-  const customerHappy = milestones?.customerHappy;
+  const customerHappy = milestones?.customerHappy === true;
   const fitCallOverdue = !fitCallDone && days > 14;
-  const fitIssue = fitCallDone && customerHappy === false;
-  // If VA has done the fit call but hasn't ticked "customer happy", we treat
-  // the answer as still pending — surface a soft nudge but not a full FIT ISSUE.
-  const fitPending = fitCallDone && customerHappy === undefined;
+  // A fit issue is "customer is not happy" — treated as amber. No inference
+  // about "happiness pending" — the two flags are independent.
+  const fitIssue = fitCallDone && milestones?.customerHappy === false;
 
   return (
     <div className={`rounded-xl bg-[#111] border ${fitIssue ? 'border-amber-400/50' : overdue ? 'border-red-400/40' : 'border-[#1A1A1A]'} p-4`}>
@@ -464,11 +504,8 @@ function DeliveryCard({
       {fitCallOverdue && (
         <p className="mt-1 text-[11px] text-amber-400">Fit call not done — {days} days since delivery.</p>
       )}
-      {fitPending && (
-        <p className="mt-1 text-[11px] text-dim">Fit call done — waiting on happiness confirmation.</p>
-      )}
 
-      {/* Fit call + customer happy checkboxes */}
+      {/* Independent checkboxes — both always visible, either can be ticked in any order. */}
       <div className="mt-3 flex flex-col gap-1.5">
         <label className="flex items-center gap-2 text-[11px] cursor-pointer select-none">
           <input
@@ -484,20 +521,18 @@ function DeliveryCard({
             )}
           </span>
         </label>
-        {fitCallDone && (
-          <label className="flex items-center gap-2 text-[11px] cursor-pointer select-none pl-6">
-            <input
-              type="checkbox"
-              checked={customerHappy === true}
-              onChange={e => onPatchFlags(deal.id, { customerHappy: e.target.checked ? true : false })}
-              className="w-3.5 h-3.5 accent-emerald-400 cursor-pointer"
-            />
-            <span className={customerHappy === true ? 'text-emerald-300' : fitIssue ? 'text-amber-300' : 'text-muted'}>
-              Customer happy
-              {customerHappy === false && <span className="text-amber-400 ml-1.5 text-[10px] font-semibold uppercase tracking-wider">Not happy</span>}
-            </span>
-          </label>
-        )}
+        <label className="flex items-center gap-2 text-[11px] cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={customerHappy}
+            onChange={e => onPatchFlags(deal.id, { customerHappy: e.target.checked, dispatchedAt: dispatchedAt || undefined })}
+            className="w-3.5 h-3.5 accent-emerald-400 cursor-pointer"
+          />
+          <span className={customerHappy ? 'text-emerald-300' : fitIssue ? 'text-amber-300' : 'text-muted'}>
+            Customer happy
+            {fitIssue && <span className="text-amber-400 ml-1.5 text-[10px] font-semibold uppercase tracking-wider">Not happy</span>}
+          </span>
+        </label>
       </div>
 
       {/* Milestone list */}
@@ -535,6 +570,3 @@ function DeliveryCard({
     </div>
   );
 }
-
-// silence unused import lint if currentPoint isn't referenced (kept for possible future use)
-void currentPoint;

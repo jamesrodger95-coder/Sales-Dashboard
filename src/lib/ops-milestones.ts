@@ -6,14 +6,14 @@ import fs from 'fs/promises';
 import path from 'path';
 export type {
   MilestoneEntry, MfgMilestones, DeliveryMilestones, MeasurementFlags,
-  MfgSchedulePoint, DeliverySchedulePoint,
+  MfgSchedulePoint, DeliverySchedulePoint, DeliveryWeekKey,
 } from './ops-schedules';
 export {
   REFRACTIVE_SCHEDULE, MAGNIFLEX_SCHEDULE, DELIVERY_SCHEDULE,
   isMagniFlex, scheduleFor, productName,
 } from './ops-schedules';
 
-import type { MfgMilestones, DeliveryMilestones, MilestoneEntry, MeasurementFlags } from './ops-schedules';
+import type { MfgMilestones, DeliveryMilestones, MilestoneEntry, MeasurementFlags, DeliveryWeekKey } from './ops-schedules';
 
 // ============================================================================
 // Storage — KV REST first, JSON file fallback (same pattern as debriefs / board).
@@ -130,7 +130,7 @@ export async function getDeliveryMilestones(dealId: string): Promise<DeliveryMil
 
 export async function setDeliveryMilestone(
   dealId: string,
-  weekKey: 'week1' | 'week8' | 'week16' | 'week20',
+  weekKey: DeliveryWeekKey,
   entry: MilestoneEntry,
   dispatchedAt?: string,
 ): Promise<DeliveryMilestones> {

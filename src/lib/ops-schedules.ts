@@ -164,8 +164,10 @@ The Bryant Dental Team`,
   },
 ];
 
+export type DeliveryWeekKey = 'week1' | 'week8' | 'week16' | 'week20' | 'week24';
+
 export interface DeliverySchedulePoint {
-  key: 'week1' | 'week8' | 'week16' | 'week20';
+  key: DeliveryWeekKey;
   week: number;
   label: string;
   emailSubject: string;
@@ -229,6 +231,28 @@ The Bryant Dental Team`,
     emailBody: (name, product) => `Hi ${name},
 
 Glad you're enjoying your ${product}! If any colleagues have been asking about your loupes, we'd love to help them too — you can share this booking link:
+
+https://bryant.dental/book
+
+Thank you for being part of the BD community!
+
+Best wishes,
+The Bryant Dental Team`,
+  },
+  {
+    key: 'week24',
+    week: 24,
+    label: 'Review & Referral Follow-Up',
+    emailSubject: 'Still loving your loupes?',
+    emailBody: (name, product) => `Hi ${name},
+
+It's been about 6 months with your ${product} now. We hope they're still making a difference every day.
+
+If you haven't had a chance yet, we'd really appreciate a quick Google review — it helps other clinicians discover us:
+
+https://g.page/r/bryant-dental/review
+
+And if any colleagues have been asking about your loupes, feel free to share this link:
 
 https://bryant.dental/book
 

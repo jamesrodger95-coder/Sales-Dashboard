@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ error: 'type must be mfg, delivery, or measurement' }, { status: 400 });
 }
 
-const VALID_DELIVERY_KEYS = ['week1', 'week8', 'week16', 'week20'] as const;
+const VALID_DELIVERY_KEYS = ['week1', 'week8', 'week16', 'week20', 'week24'] as const;
 
 export async function POST(request: NextRequest) {
   try {
