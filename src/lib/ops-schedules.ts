@@ -15,6 +15,17 @@ export interface MilestoneEntry {
 export interface MfgMilestones {
   dealId: string;
   entries: Record<string, MilestoneEntry>; // key = "week1" | "week4" | ...
+  /**
+   * When this deal first entered "In Manufacturing" — stamped by the ops
+   * dashboard on first sight and never updated after that. This is the
+   * reliable clock for build progress, because Zoho's Modified_Time gets
+   * touched every time anyone edits the deal (notes, addresses, milestones
+   * being marked sent, etc.) and drifts unpredictably.
+   *
+   * Best guess on first sight is deal.Modified_Time; if that's already stale
+   * because someone recently edited the deal, use setStartDate to correct it.
+   */
+  startDate?: string;
 }
 
 export interface DeliveryMilestones {
@@ -267,8 +278,20 @@ The Bryant Dental Team`,
 // Product helpers — client-safe
 // ============================================================================
 
+// Product detection tolerates the various ways MagniFlex has been recorded in
+// Zoho — spec asks us to match "MagniFlex", "Magni", and "3-in-1".
 export function isMagniFlex(deal: ZohoDeal): boolean {
-  return (deal.Refractive_Magnification || '').toLowerCase() === 'magniflex';
+  const v = (deal.Refractive_Magnification || '').toLowerCase().trim();
+  if (!v) return false;
+  return v.includes('magniflex') || v.includes('magni') || v.includes('3-in-1') || v.includes('3 in 1');
+}
+
+// Whether the product field is populated enough to trust the target-weeks math.
+// If false, the UI should surface a "Product unknown" flag so the VA knows
+// the 12-week target is a default, not a confirmed spec.
+export function productKnown(deal: ZohoDeal): boolean {
+  const v = (deal.Refractive_Magnification || '').trim();
+  return !!v && v !== '-None-';
 }
 
 export function scheduleFor(deal: ZohoDeal): MfgSchedulePoint[] {
@@ -278,6 +301,12 @@ export function scheduleFor(deal: ZohoDeal): MfgSchedulePoint[] {
 export function productName(deal: ZohoDeal): string {
   const mag = deal.Refractive_Magnification;
   if (!mag || mag === '-None-') return 'Bryant Dental loupes';
-  if (mag === 'MagniFlex') return 'MagniFlex';
+  if (isMagniFlex(deal)) return 'MagniFlex';
   return `${mag} Refractive`;
+}
+
+// Manufacturing clock start. Prefer the stored start date (frozen on first
+// sight in ops), fall back to Modified_Time, then Created_Time.
+export function mfgStartOf(deal: ZohoDeal, milestone: MfgMilestones | undefined): string | null {
+  return milestone?.startDate || deal.Modified_Time || deal.Created_Time || null;
 }

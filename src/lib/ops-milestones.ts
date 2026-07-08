@@ -10,7 +10,7 @@ export type {
 } from './ops-schedules';
 export {
   REFRACTIVE_SCHEDULE, MAGNIFLEX_SCHEDULE, DELIVERY_SCHEDULE,
-  isMagniFlex, scheduleFor, productName,
+  isMagniFlex, productKnown, scheduleFor, productName, mfgStartOf,
 } from './ops-schedules';
 
 import type { MfgMilestones, DeliveryMilestones, MilestoneEntry, MeasurementFlags, DeliveryWeekKey } from './ops-schedules';
@@ -114,6 +114,39 @@ export async function setMfgMilestone(dealId: string, weekKey: string, entry: Mi
   all.mfg[dealId] = current;
   await writeAllToFile(all);
   return current;
+}
+
+// Stamp startDate on first sight. Idempotent — never overwrites an existing
+// value, so the manufacturing clock stays consistent even if the deal is
+// edited in Zoho after we first see it.
+export async function ensureMfgStartDate(dealId: string, fallbackDate: string): Promise<MfgMilestones> {
+  const current = await getMfgMilestones(dealId);
+  if (current.startDate) return current;
+  const record: MfgMilestones = { ...current, startDate: fallbackDate };
+  if (hasKV()) {
+    try { await kvSet(mfgKey(dealId), record); return record; }
+    catch (err) { console.error('[ops-milestones] KV set mfg start failed:', err); }
+  }
+  const all = await readAllFromFile();
+  all.mfg[dealId] = record;
+  await writeAllToFile(all);
+  return record;
+}
+
+// Manual override — used when the first-sight stamp is wrong (e.g. someone
+// edited the deal in Zoho recently, so Modified_Time is much later than the
+// actual manufacturing start).
+export async function setMfgStartDate(dealId: string, startDate: string): Promise<MfgMilestones> {
+  const current = await getMfgMilestones(dealId);
+  const record: MfgMilestones = { ...current, startDate };
+  if (hasKV()) {
+    try { await kvSet(mfgKey(dealId), record); return record; }
+    catch (err) { console.error('[ops-milestones] KV override mfg start failed:', err); }
+  }
+  const all = await readAllFromFile();
+  all.mfg[dealId] = record;
+  await writeAllToFile(all);
+  return record;
 }
 
 export async function getDeliveryMilestones(dealId: string): Promise<DeliveryMilestones> {

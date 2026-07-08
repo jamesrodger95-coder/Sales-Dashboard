@@ -5,6 +5,7 @@ import Link from 'next/link';
 import StatChip from '@/components/ops/StatChip';
 import type { ZohoDeal } from '@/lib/zoho-client';
 import type { MfgMilestones, DeliveryMilestones } from '@/lib/ops-schedules';
+import { isMagniFlex, mfgStartOf } from '@/lib/ops-schedules';
 import { daysSince, weeksSince, dealCustomerName } from '@/lib/ops-utils';
 
 // Repeated verbatim here (not imported) because the ops page is a client
@@ -25,23 +26,18 @@ interface DealResponse {
   delivery?: Record<string, DeliveryMilestones>;
 }
 
-function isMagniFlex(d: ZohoDeal): boolean {
-  return (d.Refractive_Magnification || '').toLowerCase() === 'magniflex';
-}
 function targetWeeks(d: ZohoDeal): number {
   return isMagniFlex(d) ? 20 : 12;
 }
-// Weeks in the "In Manufacturing" stage. We approximate stage-entry time with
-// Modified_Time — Zoho updates that whenever the deal stage moves, so as long
-// as the deal is currently at "In Manufacturing", Modified_Time is when it
-// arrived. NEVER use Created_Time here: a deal can be created months before
-// entering manufacturing (measurements, final checks, etc.).
-function mfgWeeksElapsed(d: ZohoDeal): number {
-  return weeksSince(d.Modified_Time);
+// Weeks elapsed since manufacturing started. Uses the stored startDate from
+// Redis (frozen on first sight) so status buckets don't drift when someone
+// edits the deal in Zoho.
+function mfgWeeksElapsed(d: ZohoDeal, milestone: MfgMilestones | undefined): number {
+  return weeksSince(mfgStartOf(d, milestone));
 }
-function mfgStatus(d: ZohoDeal): 'on_track' | 'approaching' | 'overdue' {
+function mfgStatus(d: ZohoDeal, milestone: MfgMilestones | undefined): 'on_track' | 'approaching' | 'overdue' {
   const target = targetWeeks(d);
-  const elapsed = mfgWeeksElapsed(d);
+  const elapsed = mfgWeeksElapsed(d, milestone);
   if (elapsed >= target) return 'overdue';
   if (elapsed >= target - 1) return 'approaching';
   return 'on_track';
@@ -90,10 +86,12 @@ export default function OpsHome() {
   // The full on-track / needs-nudge breakdown lives on /ops/measurements.
   const awaitingOverdue = awaiting.filter(d => daysSince(d.Modified_Time) > 14);
 
-  // Manufacturing sub-buckets
-  const mfgOnTrack     = manufacturing.filter(d => mfgStatus(d) === 'on_track');
-  const mfgApproaching = manufacturing.filter(d => mfgStatus(d) === 'approaching');
-  const mfgOverdue     = manufacturing.filter(d => mfgStatus(d) === 'overdue');
+  // Manufacturing sub-buckets — pass through the stored milestone so the
+  // status matches what /ops/production shows exactly.
+  const mfgDb = data?.mfg || {};
+  const mfgOnTrack     = manufacturing.filter(d => mfgStatus(d, mfgDb[d.id]) === 'on_track');
+  const mfgApproaching = manufacturing.filter(d => mfgStatus(d, mfgDb[d.id]) === 'approaching');
+  const mfgOverdue     = manufacturing.filter(d => mfgStatus(d, mfgDb[d.id]) === 'overdue');
 
   // Post-delivery: for each dispatched deal (proxy: stage moved to Dispatched at Modified_Time)
   const deliveryDb = data?.delivery || {};
@@ -125,7 +123,7 @@ export default function OpsHome() {
   }));
   mfgOverdue.slice(0, 3).forEach(d => actions.push({
     tone: 'bad',
-    text: `${dealCustomerName(d)} — ${d.Refractive_Magnification || 'Refractive'} week ${mfgWeeksElapsed(d)}/${targetWeeks(d)}`,
+    text: `${dealCustomerName(d)} — ${d.Refractive_Magnification || 'Refractive'} week ${mfgWeeksElapsed(d, mfgDb[d.id])}/${targetWeeks(d)}`,
     href: '/ops/production',
   }));
   dueFit.slice(0, 2).forEach(d => actions.push({

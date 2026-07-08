@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  setMfgMilestone, getMfgMilestones,
+  setMfgMilestone, getMfgMilestones, setMfgStartDate,
   setDeliveryMilestone, getDeliveryMilestones, patchDeliveryFlags,
   setMeasurementIssue, getMeasurementFlags,
 } from '@/lib/ops-milestones';
@@ -39,6 +39,18 @@ export async function POST(request: NextRequest) {
       const issueFlagged = !!body.issueFlagged;
       const record = await setMeasurementIssue(dealId, issueFlagged, body.notes);
       return NextResponse.json({ measurement: record });
+    }
+
+    // Manual override of the manufacturing start date. Used when the first-
+    // sight stamp is wrong because the deal was edited in Zoho shortly before
+    // the ops dashboard first saw it.
+    if (type === 'mfg' && body.action === 'setStartDate') {
+      const startDate = body.startDate;
+      if (!startDate || typeof startDate !== 'string') {
+        return NextResponse.json({ error: 'startDate (ISO string) required' }, { status: 400 });
+      }
+      const record = await setMfgStartDate(dealId, startDate);
+      return NextResponse.json({ milestones: record });
     }
 
     // Delivery flag patches (fit call, customer happy) — separate path from milestone sends
