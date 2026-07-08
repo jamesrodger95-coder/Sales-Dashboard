@@ -21,6 +21,24 @@ export interface DeliveryMilestones {
   dealId: string;
   dispatchedAt?: string;
   entries: Record<string, MilestoneEntry>; // key = "week1" | "week8" | ...
+  /** VA has completed the fit call with the customer. */
+  fitCallDone?: boolean;
+  fitCallDate?: string;
+  /**
+   * Set only after fitCallDone is true. true = happy; false = FIT ISSUE.
+   * When fitCallDone but customerHappy is missing, we treat it as "needs attention"
+   * so the VA doesn't lose track of the answer.
+   */
+  customerHappy?: boolean;
+}
+
+// Measurement issue flag lives alongside milestones so we can track cards
+// during "Measurement Final Checks" that need clinician follow-up.
+export interface MeasurementFlags {
+  dealId: string;
+  issueFlagged: boolean;
+  flaggedAt?: string;
+  notes?: string;
 }
 
 export interface MfgSchedulePoint {
@@ -158,11 +176,19 @@ export const DELIVERY_SCHEDULE: DeliverySchedulePoint[] = [
   {
     key: 'week1',
     week: 1,
-    label: 'Delivery check',
-    emailSubject: 'Have your Bryant Dental loupes arrived?',
+    label: 'Onboarding',
+    emailSubject: 'Welcome to Bryant Dental — your loupes are here',
     emailBody: (name, product) => `Hi ${name},
 
-Just a quick check-in — have your ${product} arrived safely? Any initial questions or anything you'd like walked through, just reply and we'll help.
+Welcome to Bryant Dental! Your ${product} should be with you now — congratulations, we hope you love them.
+
+A few things to help you get started:
+• Wearing them for the first time can feel unusual — give yourself a couple of clinical sessions to adapt.
+• The AI custom fit means they should feel balanced and light; if anything feels off, don't push through it, get in touch.
+• Any adjustments needed, we can arrange a fit call at a time that suits you.
+• Support: just reply to this email, or reach us on WhatsApp.
+
+If you have any questions about fit, adjustment, or how to get the most out of your loupes, just reply and we'll get you sorted.
 
 Best wishes,
 The Bryant Dental Team`,
@@ -170,7 +196,7 @@ The Bryant Dental Team`,
   {
     key: 'week8',
     week: 8,
-    label: 'Fit check',
+    label: 'Fit Check',
     emailSubject: 'How are your loupes?',
     emailBody: (name, product) => `Hi ${name},
 
@@ -182,7 +208,7 @@ The Bryant Dental Team`,
   {
     key: 'week16',
     week: 16,
-    label: 'Review request',
+    label: 'Review Request',
     emailSubject: 'Would you recommend Bryant Dental?',
     emailBody: (name, product) => `Hi ${name},
 
@@ -198,7 +224,7 @@ The Bryant Dental Team`,
   {
     key: 'week20',
     week: 20,
-    label: 'Referral ask',
+    label: 'Referral Ask',
     emailSubject: `Know a colleague who'd love loupes like yours?`,
     emailBody: (name, product) => `Hi ${name},
 

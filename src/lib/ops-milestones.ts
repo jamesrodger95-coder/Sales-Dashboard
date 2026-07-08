@@ -5,7 +5,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 export type {
-  MilestoneEntry, MfgMilestones, DeliveryMilestones,
+  MilestoneEntry, MfgMilestones, DeliveryMilestones, MeasurementFlags,
   MfgSchedulePoint, DeliverySchedulePoint,
 } from './ops-schedules';
 export {
@@ -13,7 +13,7 @@ export {
   isMagniFlex, scheduleFor, productName,
 } from './ops-schedules';
 
-import type { MfgMilestones, DeliveryMilestones, MilestoneEntry } from './ops-schedules';
+import type { MfgMilestones, DeliveryMilestones, MilestoneEntry, MeasurementFlags } from './ops-schedules';
 
 // ============================================================================
 // Storage — KV REST first, JSON file fallback (same pattern as debriefs / board).
@@ -30,19 +30,23 @@ const activeFile = () => (isVercel() ? TMP_FILE : LOCAL_FILE);
 interface FileShape {
   mfg: Record<string, MfgMilestones>;
   delivery: Record<string, DeliveryMilestones>;
+  measurement: Record<string, MeasurementFlags>;
 }
 
 async function ensureFile(file: string) {
   try { await fs.access(file); return; } catch { /* missing */ }
   try { await fs.mkdir(path.dirname(file), { recursive: true }); } catch { /* exists */ }
-  await fs.writeFile(file, JSON.stringify({ mfg: {}, delivery: {} }, null, 2), 'utf-8');
+  await fs.writeFile(file, JSON.stringify({ mfg: {}, delivery: {}, measurement: {} }, null, 2), 'utf-8');
 }
 
 async function readAllFromFile(): Promise<FileShape> {
   const file = activeFile();
   await ensureFile(file);
-  try { return JSON.parse(await fs.readFile(file, 'utf-8')) as FileShape; }
-  catch { return { mfg: {}, delivery: {} }; }
+  try {
+    const raw = JSON.parse(await fs.readFile(file, 'utf-8')) as Partial<FileShape>;
+    return { mfg: raw.mfg || {}, delivery: raw.delivery || {}, measurement: raw.measurement || {} };
+  }
+  catch { return { mfg: {}, delivery: {}, measurement: {} }; }
 }
 
 async function writeAllToFile(all: FileShape) {
@@ -85,6 +89,7 @@ async function kvSet(key: string, value: unknown): Promise<void> {
 
 const mfgKey = (id: string) => `ops:mfg:${id}`;
 const deliveryKey = (id: string) => `ops:delivery:${id}`;
+const measurementKey = (id: string) => `ops:measurement:${id}`;
 
 export async function getMfgMilestones(dealId: string): Promise<MfgMilestones> {
   const fallback: MfgMilestones = { dealId, entries: {} };
@@ -140,6 +145,96 @@ export async function setDeliveryMilestone(
   all.delivery[dealId] = current;
   await writeAllToFile(all);
   return current;
+}
+
+// Patch fit-call + happiness flags without touching milestone entries.
+// Passing `undefined` for a field leaves it unchanged; explicit `null` clears it.
+export async function patchDeliveryFlags(
+  dealId: string,
+  patch: {
+    fitCallDone?: boolean | null;
+    fitCallDate?: string | null;
+    customerHappy?: boolean | null;
+    dispatchedAt?: string;
+  },
+): Promise<DeliveryMilestones> {
+  const current = await getDeliveryMilestones(dealId);
+  if (patch.dispatchedAt) current.dispatchedAt = patch.dispatchedAt;
+  if (patch.fitCallDone !== undefined) {
+    if (patch.fitCallDone === null || patch.fitCallDone === false) {
+      current.fitCallDone = false;
+      current.fitCallDate = undefined;
+      // Clearing fit-call also clears happiness since it's meaningless without the call.
+      current.customerHappy = undefined;
+    } else {
+      current.fitCallDone = true;
+      current.fitCallDate = patch.fitCallDate || new Date().toISOString();
+    }
+  }
+  if (patch.customerHappy !== undefined) {
+    current.customerHappy = patch.customerHappy === null ? undefined : !!patch.customerHappy;
+  }
+  if (hasKV()) {
+    try { await kvSet(deliveryKey(dealId), current); return current; }
+    catch (err) { console.error('[ops-milestones] KV patch delivery flags failed:', err); }
+  }
+  const all = await readAllFromFile();
+  all.delivery[dealId] = current;
+  await writeAllToFile(all);
+  return current;
+}
+
+// ============================================================================
+// Measurement flags — one record per deal, single boolean issueFlagged.
+// ============================================================================
+
+export async function getMeasurementFlags(dealId: string): Promise<MeasurementFlags> {
+  const fallback: MeasurementFlags = { dealId, issueFlagged: false };
+  if (hasKV()) {
+    try {
+      const v = await kvGet<MeasurementFlags>(measurementKey(dealId));
+      return v ?? fallback;
+    } catch (err) { console.error('[ops-milestones] KV get measurement failed:', err); }
+  }
+  const all = await readAllFromFile();
+  return all.measurement[dealId] ?? fallback;
+}
+
+export async function setMeasurementIssue(
+  dealId: string,
+  issueFlagged: boolean,
+  notes?: string,
+): Promise<MeasurementFlags> {
+  const record: MeasurementFlags = {
+    dealId,
+    issueFlagged,
+    flaggedAt: issueFlagged ? new Date().toISOString() : undefined,
+    notes,
+  };
+  if (hasKV()) {
+    try { await kvSet(measurementKey(dealId), record); return record; }
+    catch (err) { console.error('[ops-milestones] KV set measurement failed:', err); }
+  }
+  const all = await readAllFromFile();
+  all.measurement[dealId] = record;
+  await writeAllToFile(all);
+  return record;
+}
+
+export async function bulkGetMeasurement(dealIds: string[]): Promise<Map<string, MeasurementFlags>> {
+  const out = new Map<string, MeasurementFlags>();
+  if (hasKV()) {
+    await Promise.all(dealIds.map(async id => {
+      try {
+        const v = await kvGet<MeasurementFlags>(measurementKey(id));
+        if (v) out.set(id, v);
+      } catch { /* leave missing */ }
+    }));
+    return out;
+  }
+  const all = await readAllFromFile();
+  for (const id of dealIds) if (all.measurement[id]) out.set(id, all.measurement[id]);
+  return out;
 }
 
 // Bulk fetch for a list of deals — used by ops pages to avoid N sequential

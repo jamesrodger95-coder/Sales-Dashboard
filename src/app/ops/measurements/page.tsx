@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { ZohoDeal } from '@/lib/zoho-client';
+import type { MeasurementFlags } from '@/lib/ops-schedules';
 import WhatsAppLink from '@/components/ops/WhatsAppLink';
+import WhatsAppButton from '@/components/ops/WhatsAppButton';
 import CopyButton from '@/components/ops/CopyButton';
 import { daysSince, dealCustomerName, extractFirstName, mailtoHref } from '@/lib/ops-utils';
 
@@ -14,6 +16,7 @@ type SortKey = 'days' | 'name' | 'country' | 'date';
 
 interface State {
   deals: ZohoDeal[];
+  measurement: Record<string, MeasurementFlags>;
   lastSync: Date | null;
   loading: boolean;
   error: string | null;
@@ -56,21 +59,39 @@ function measurementProgress(deal: ZohoDeal): { pct: number; color: string; labe
 }
 
 export default function MeasurementsPage() {
-  const [state, setState] = useState<State>({ deals: [], lastSync: null, loading: true, error: null });
+  const [state, setState] = useState<State>({ deals: [], measurement: {}, lastSync: null, loading: true, error: null });
   const [sortKey, setSortKey] = useState<SortKey>('days');
 
   const load = useCallback(async () => {
     setState(s => ({ ...s, error: null }));
     try {
-      const url = `/api/ops/deals?stages=${encodeURIComponent(OPS_STAGES.join(','))}`;
+      const url = `/api/ops/deals?stages=${encodeURIComponent(OPS_STAGES.join(','))}&withMeasurement=1`;
       const res = await fetch(url);
       const j = await res.json();
       if (!res.ok) throw new Error(j?.error || `Server ${res.status}`);
-      setState({ deals: j.deals || [], lastSync: new Date(), loading: false, error: null });
+      setState({ deals: j.deals || [], measurement: j.measurement || {}, lastSync: new Date(), loading: false, error: null });
     } catch (err) {
       setState(s => ({ ...s, loading: false, error: err instanceof Error ? err.message : 'Failed' }));
     }
   }, []);
+
+  const setIssue = useCallback(async (dealId: string, issueFlagged: boolean) => {
+    // Optimistic update — a stale click shouldn't block the VA workflow
+    setState(s => ({
+      ...s,
+      measurement: { ...s.measurement, [dealId]: { dealId, issueFlagged, flaggedAt: issueFlagged ? new Date().toISOString() : undefined } },
+    }));
+    try {
+      await fetch('/api/ops/milestones', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'measurement', dealId, issueFlagged }),
+      });
+    } catch (err) {
+      console.error('[measurements] setIssue failed', err);
+      load();
+    }
+  }, [load]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -97,6 +118,7 @@ export default function MeasurementsPage() {
   const awaitingNudge   = awaiting.filter(d => { const dd = daysSince(d.Modified_Time); return dd > 7 && dd <= 14; }).length;
   const awaitingOverdue = awaiting.filter(d => daysSince(d.Modified_Time) > 14).length;
   const finalOverdue    = finalChecks.filter(d => daysSince(d.Modified_Time) > 14).length;
+  const finalFlagged    = finalChecks.filter(d => state.measurement[d.id]?.issueFlagged).length;
 
   return (
     <div className="max-w-[1400px] mx-auto px-5 py-6">
@@ -130,7 +152,8 @@ export default function MeasurementsPage() {
         <span className="text-red-400">Overdue: <span className="tabular-nums">{awaitingOverdue}</span></span>
         <span className="text-[#333]">·</span>
         <span>Final Checks: <span className="text-white font-semibold tabular-nums">{finalChecks.length}</span></span>
-        {finalOverdue > 0 && <span className="text-red-400">({finalOverdue} flagged)</span>}
+        {finalOverdue > 0 && <span className="text-red-400">({finalOverdue} overdue)</span>}
+        {finalFlagged > 0 && <span className="text-amber-400">({finalFlagged} issue flagged)</span>}
       </div>
 
       {state.error && (
@@ -148,7 +171,7 @@ export default function MeasurementsPage() {
           ) : awaiting.length === 0 ? (
             <Empty message="Nothing waiting." />
           ) : sort(awaiting).map(d => (
-            <MeasurementCard key={d.id} deal={d} action="reminder" />
+            <MeasurementCard key={d.id} deal={d} action="reminder" flags={undefined} onIssueChange={undefined} />
           ))}
         </Column>
 
@@ -158,7 +181,13 @@ export default function MeasurementsPage() {
           ) : finalChecks.length === 0 ? (
             <Empty message="Nothing in final checks." />
           ) : sort(finalChecks).map(d => (
-            <MeasurementCard key={d.id} deal={d} action="finalChecks" />
+            <MeasurementCard
+              key={d.id}
+              deal={d}
+              action="finalChecks"
+              flags={state.measurement[d.id]}
+              onIssueChange={next => setIssue(d.id, next)}
+            />
           ))}
         </Column>
       </div>
@@ -193,14 +222,26 @@ function Empty({ message }: { message: string }) {
   return <p className="text-xs text-dim italic text-center py-8">{message}</p>;
 }
 
-function MeasurementCard({ deal, action }: { deal: ZohoDeal; action: 'reminder' | 'finalChecks' }) {
+function MeasurementCard({
+  deal, action, flags, onIssueChange,
+}: {
+  deal: ZohoDeal;
+  action: 'reminder' | 'finalChecks';
+  flags: MeasurementFlags | undefined;
+  onIssueChange: ((next: boolean) => void) | undefined;
+}) {
   const name = dealCustomerName(deal);
   const progress = measurementProgress(deal);
   const mailto = action === 'reminder' ? reminderMailto(deal) : finalChecksMailto(deal);
   const actionLabel = action === 'reminder' ? 'Send Reminder' : 'Send Update';
+  const issue = flags?.issueFlagged === true;
+
+  // Border priority: measurement issue (amber) overrides overdue-red because
+  // an issue is actionable — VAs need to see the flag distinct from time drift.
+  const borderCls = issue ? 'border-amber-400/40' : progress.overdue ? 'border-red-400/30' : 'border-[#1A1A1A]';
 
   return (
-    <div className={`rounded-xl bg-[#111] border p-4 transition-colors ${progress.overdue ? 'border-red-400/30' : 'border-[#1A1A1A]'}`}>
+    <div className={`rounded-xl bg-[#111] border p-4 transition-colors ${borderCls}`}>
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-white truncate">{name || 'Unnamed order'}</p>
@@ -210,9 +251,14 @@ function MeasurementCard({ deal, action }: { deal: ZohoDeal; action: 'reminder' 
           </div>
           {deal.Email && <p className="mt-1 text-[11px] text-dim truncate">{deal.Email}</p>}
         </div>
-        {progress.overdue && (
-          <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded">Overdue</span>
-        )}
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          {issue && (
+            <span className="text-[9px] font-bold uppercase tracking-wider text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">Measurement issue</span>
+          )}
+          {progress.overdue && !issue && (
+            <span className="text-[9px] font-bold uppercase tracking-wider text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded">Overdue</span>
+          )}
+        </div>
       </div>
 
       {/* Progress bar */}
@@ -223,6 +269,24 @@ function MeasurementCard({ deal, action }: { deal: ZohoDeal; action: 'reminder' 
         <p className="mt-1 text-[10px] text-dim">{progress.label}</p>
       </div>
 
+      {/* Measurement-issue checkbox (final checks only) */}
+      {action === 'finalChecks' && onIssueChange && (
+        <label className="mt-3 flex items-center gap-2 text-[11px] cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={issue}
+            onChange={e => onIssueChange(e.target.checked)}
+            className="w-3.5 h-3.5 accent-amber-400 cursor-pointer"
+          />
+          <span className={issue ? 'text-amber-300' : 'text-muted'}>
+            Measurement issues flagged
+            {issue && flags?.flaggedAt && (
+              <span className="text-dim ml-1.5">({new Date(flags.flaggedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })})</span>
+            )}
+          </span>
+        </label>
+      )}
+
       {/* Actions */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <a
@@ -230,6 +294,7 @@ function MeasurementCard({ deal, action }: { deal: ZohoDeal; action: 'reminder' 
           onClick={e => e.stopPropagation()}
           className="px-3 py-1.5 rounded-md bg-emerald-400/15 border border-emerald-400/40 text-emerald-300 text-[11px] font-semibold hover:bg-emerald-400/25 transition-colors"
         >{actionLabel}</a>
+        <WhatsAppButton phone={deal.Phone} />
         <CopyButton value={deal.Email} label="Copy email" />
         <CopyButton value={deal.Phone} label="Copy phone" />
       </div>

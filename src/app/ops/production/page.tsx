@@ -5,6 +5,7 @@ import type { ZohoDeal } from '@/lib/zoho-client';
 import type { MfgMilestones, MfgSchedulePoint } from '@/lib/ops-schedules';
 import { REFRACTIVE_SCHEDULE, MAGNIFLEX_SCHEDULE } from '@/lib/ops-schedules';
 import WhatsAppLink from '@/components/ops/WhatsAppLink';
+import WhatsAppButton from '@/components/ops/WhatsAppButton';
 import CopyButton from '@/components/ops/CopyButton';
 import { daysSince, dealCustomerName, extractFirstName, mailtoHref, weeksSince } from '@/lib/ops-utils';
 
@@ -38,8 +39,11 @@ function productName(d: ZohoDeal) {
   if (mag === 'MagniFlex') return 'MagniFlex';
   return `${mag} Refractive`;
 }
+// Weeks in the "In Manufacturing" stage. Modified_Time is a better proxy for
+// stage entry than Created_Time — the deal might have sat in Awaiting
+// Measurements or Final Checks for weeks before entering manufacturing.
 function mfgWeeksElapsed(d: ZohoDeal) {
-  return weeksSince(d.Payment_Authorisation_Date || d.Created_Time);
+  return weeksSince(d.Modified_Time);
 }
 function mfgStatus(d: ZohoDeal): 'on_track' | 'approaching' | 'overdue' {
   const target = targetWeeks(d);
@@ -275,6 +279,7 @@ function ManufacturingCard({ deal, milestones, onSent }: { deal: ZohoDeal; miles
         ) : (
           <span className="text-[10px] text-dim italic px-2">No milestone due yet.</span>
         )}
+        <WhatsAppButton phone={deal.Phone} />
         <CopyButton value={deal.Email} label="Copy email" />
         <CopyButton value={deal.Phone} label="Copy phone" />
       </div>
@@ -326,6 +331,7 @@ The Bryant Dental Team`;
         <a href={mailto} onClick={e => e.stopPropagation()} className="px-3 py-1.5 rounded-md bg-emerald-400/15 border border-emerald-400/40 text-emerald-300 text-[11px] font-semibold hover:bg-emerald-400/25 transition-colors">
           Confirm Address
         </a>
+        <WhatsAppButton phone={deal.Phone} />
         <CopyButton value={deal.Email} label="Copy email" />
       </div>
     </div>
@@ -354,6 +360,7 @@ The Bryant Dental Team`;
         <a href={mailto} onClick={e => e.stopPropagation()} className="px-3 py-1.5 rounded-md bg-emerald-400/15 border border-emerald-400/40 text-emerald-300 text-[11px] font-semibold hover:bg-emerald-400/25 transition-colors">
           Confirm Delivery
         </a>
+        <WhatsAppButton phone={deal.Phone} />
         <CopyButton value={deal.Email} label="Copy email" />
       </div>
     </div>

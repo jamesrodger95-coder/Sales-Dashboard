@@ -31,8 +31,13 @@ function isMagniFlex(d: ZohoDeal): boolean {
 function targetWeeks(d: ZohoDeal): number {
   return isMagniFlex(d) ? 20 : 12;
 }
+// Weeks in the "In Manufacturing" stage. We approximate stage-entry time with
+// Modified_Time — Zoho updates that whenever the deal stage moves, so as long
+// as the deal is currently at "In Manufacturing", Modified_Time is when it
+// arrived. NEVER use Created_Time here: a deal can be created months before
+// entering manufacturing (measurements, final checks, etc.).
 function mfgWeeksElapsed(d: ZohoDeal): number {
-  return weeksSince(d.Payment_Authorisation_Date || d.Created_Time);
+  return weeksSince(d.Modified_Time);
 }
 function mfgStatus(d: ZohoDeal): 'on_track' | 'approaching' | 'overdue' {
   const target = targetWeeks(d);
