@@ -290,7 +290,14 @@ function ManufacturingCard({
   const dueNow = schedule.find(m => elapsed >= m.week && !entries[`week${m.week}`]?.sent);
   const name = dealCustomerName(deal);
   const productIsKnown = productKnown(deal);
-  const startSource = milestones?.startDate ? 'stored' : 'from Modified_Time';
+  // Human label for where the manufacturing clock came from.
+  const startSource = (() => {
+    const src = milestones?.startDateSource;
+    if (src === 'stage_history') return 'from Zoho stage history';
+    if (src === 'manual') return 'manually set';
+    if (src === 'modified_time') return 'from Modified_Time (fallback)';
+    return milestones?.startDate ? 'stored' : 'not stamped yet';
+  })();
   const startDate = mfgStartOf(deal, milestones);
   const startDisplay = startDate ? new Date(startDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'unknown';
   const startDateInputValue = startDate ? new Date(startDate).toISOString().slice(0, 10) : '';

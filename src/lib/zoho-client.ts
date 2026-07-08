@@ -318,6 +318,39 @@ export function matchEmailToCrm(
 
 // --- Lead lookup + Note creation (used by debrief auto-push) ---
 
+// Zoho's Stage_History related list — one entry per stage transition.
+// Newest first. Each entry looks like: { id, Stage, Modified_Time, Duration_Days, Modified_By, ... }
+// The Modified_Time on each entry is when the deal ENTERED that stage.
+export interface StageHistoryEntry {
+  id: string;
+  Stage: string;
+  Modified_Time: string;
+  Duration_Days?: number;
+  Modified_By?: { name: string; id: string };
+}
+
+// Zoho requires `fields` on the Stage_History related list. Modified_Time is
+// when the deal entered that stage; Stage_Duration_Calendar_Days is available
+// but not needed for our use case.
+export async function fetchStageHistory(dealId: string): Promise<StageHistoryEntry[]> {
+  if (!dealId) return [];
+  try {
+    const data = await zohoFetch(`/crm/v6/Deals/${dealId}/Stage_History?fields=Stage,Modified_Time,Stage_Duration_Calendar_Days`);
+    const rows = (data.data as StageHistoryEntry[] | undefined) || [];
+    return rows;
+  } catch (err) {
+    console.error('[Zoho] fetchStageHistory failed for', dealId, err);
+    return [];
+  }
+}
+
+// When did the deal enter `stage`? Returns the Modified_Time of the most
+// recent history entry for that stage — that's the transition-in timestamp.
+export function stageEntryDate(history: StageHistoryEntry[], stage: string): string | null {
+  const entry = history.find(h => h.Stage === stage);
+  return entry?.Modified_Time || null;
+}
+
 export async function searchLeadByEmail(email: string): Promise<ZohoLead | null> {
   if (!email) return null;
   try {

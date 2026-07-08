@@ -12,20 +12,28 @@ export interface MilestoneEntry {
   sentBy?: string;
 }
 
+export type MfgStartDateSource = 'stage_history' | 'modified_time' | 'manual';
+
 export interface MfgMilestones {
   dealId: string;
   entries: Record<string, MilestoneEntry>; // key = "week1" | "week4" | ...
   /**
-   * When this deal first entered "In Manufacturing" — stamped by the ops
-   * dashboard on first sight and never updated after that. This is the
-   * reliable clock for build progress, because Zoho's Modified_Time gets
-   * touched every time anyone edits the deal (notes, addresses, milestones
-   * being marked sent, etc.) and drifts unpredictably.
-   *
-   * Best guess on first sight is deal.Modified_Time; if that's already stale
-   * because someone recently edited the deal, use setStartDate to correct it.
+   * When this deal entered "In Manufacturing" — pulled from Zoho's
+   * Stage_History related list when available. Once stamped from
+   * stage_history or manual, we never overwrite it.
    */
   startDate?: string;
+  /**
+   * How we determined startDate:
+   *   'stage_history' — pulled from Zoho's Stage_History (accurate)
+   *   'modified_time' — fallback when Stage_History was empty/failed
+   *   'manual'        — user set it via the Edit UI
+   *
+   * The auto-refresh in /api/ops/deals will re-resolve when the source is
+   * 'modified_time' or missing, so wrong first-sight stamps get corrected
+   * on the next load. It leaves 'stage_history' and 'manual' alone.
+   */
+  startDateSource?: MfgStartDateSource;
 }
 
 export interface DeliveryMilestones {

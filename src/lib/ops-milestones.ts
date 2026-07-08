@@ -6,14 +6,14 @@ import fs from 'fs/promises';
 import path from 'path';
 export type {
   MilestoneEntry, MfgMilestones, DeliveryMilestones, MeasurementFlags,
-  MfgSchedulePoint, DeliverySchedulePoint, DeliveryWeekKey,
+  MfgSchedulePoint, DeliverySchedulePoint, DeliveryWeekKey, MfgStartDateSource,
 } from './ops-schedules';
 export {
   REFRACTIVE_SCHEDULE, MAGNIFLEX_SCHEDULE, DELIVERY_SCHEDULE,
   isMagniFlex, productKnown, scheduleFor, productName, mfgStartOf,
 } from './ops-schedules';
 
-import type { MfgMilestones, DeliveryMilestones, MilestoneEntry, MeasurementFlags, DeliveryWeekKey } from './ops-schedules';
+import type { MfgMilestones, DeliveryMilestones, MilestoneEntry, MeasurementFlags, DeliveryWeekKey, MfgStartDateSource } from './ops-schedules';
 
 // ============================================================================
 // Storage — KV REST first, JSON file fallback (same pattern as debriefs / board).
@@ -116,37 +116,49 @@ export async function setMfgMilestone(dealId: string, weekKey: string, entry: Mi
   return current;
 }
 
-// Stamp startDate on first sight. Idempotent — never overwrites an existing
-// value, so the manufacturing clock stays consistent even if the deal is
-// edited in Zoho after we first see it.
-export async function ensureMfgStartDate(dealId: string, fallbackDate: string): Promise<MfgMilestones> {
-  const current = await getMfgMilestones(dealId);
-  if (current.startDate) return current;
-  const record: MfgMilestones = { ...current, startDate: fallbackDate };
+async function writeMfgRecord(record: MfgMilestones): Promise<MfgMilestones> {
   if (hasKV()) {
-    try { await kvSet(mfgKey(dealId), record); return record; }
-    catch (err) { console.error('[ops-milestones] KV set mfg start failed:', err); }
+    try { await kvSet(mfgKey(record.dealId), record); return record; }
+    catch (err) { console.error('[ops-milestones] KV set mfg failed:', err); }
   }
   const all = await readAllFromFile();
-  all.mfg[dealId] = record;
+  all.mfg[record.dealId] = record;
   await writeAllToFile(all);
   return record;
 }
 
-// Manual override — used when the first-sight stamp is wrong (e.g. someone
-// edited the deal in Zoho recently, so Modified_Time is much later than the
-// actual manufacturing start).
-export async function setMfgStartDate(dealId: string, startDate: string): Promise<MfgMilestones> {
+// Write a start date. If the caller doesn't specify a source, we assume the
+// change came from the manual override UI (setMfgStartDate).
+export async function setMfgStartDate(
+  dealId: string,
+  startDate: string,
+  startDateSource: MfgStartDateSource = 'manual',
+): Promise<MfgMilestones> {
   const current = await getMfgMilestones(dealId);
-  const record: MfgMilestones = { ...current, startDate };
-  if (hasKV()) {
-    try { await kvSet(mfgKey(dealId), record); return record; }
-    catch (err) { console.error('[ops-milestones] KV override mfg start failed:', err); }
-  }
-  const all = await readAllFromFile();
-  all.mfg[dealId] = record;
-  await writeAllToFile(all);
-  return record;
+  return writeMfgRecord({ ...current, startDate, startDateSource });
+}
+
+// Stamp startDate on first sight — idempotent. Used only for the
+// `stage_history` source; the API handles fallback to modified_time.
+export async function ensureMfgStartDate(
+  dealId: string,
+  fallbackDate: string,
+  source: MfgStartDateSource = 'modified_time',
+): Promise<MfgMilestones> {
+  const current = await getMfgMilestones(dealId);
+  if (current.startDate) return current;
+  return writeMfgRecord({ ...current, startDate: fallbackDate, startDateSource: source });
+}
+
+// Should we re-resolve the start date for this record? Any record without a
+// startDate at all, or one whose source is a fallback ('modified_time' with
+// no upgrade attempt yet), can be improved by trying Stage_History again.
+// Stage_history and manual stamps are trusted and left alone.
+export function needsStartDateRefresh(record: MfgMilestones | undefined): boolean {
+  if (!record?.startDate) return true;
+  const src = record.startDateSource;
+  if (src === 'stage_history' || src === 'manual') return false;
+  return true;
 }
 
 export async function getDeliveryMilestones(dealId: string): Promise<DeliveryMilestones> {
