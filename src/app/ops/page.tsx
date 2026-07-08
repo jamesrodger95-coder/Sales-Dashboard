@@ -81,9 +81,8 @@ export default function OpsHome() {
   const ready = deals.filter(d => READY_STAGES.includes(d.Stage));
   const dispatched = deals.filter(d => DISPATCHED_STAGES.includes(d.Stage));
 
-  // Measurements sub-buckets
-  const awaitingOnTrack = awaiting.filter(d => daysSince(d.Modified_Time) <= 7);
-  const awaitingNudge   = awaiting.filter(d => { const dd = daysSince(d.Modified_Time); return dd > 7 && dd <= 14; });
+  // Measurements sub-buckets — only overdue is surfaced on the home page.
+  // The full on-track / needs-nudge breakdown lives on /ops/measurements.
   const awaitingOverdue = awaiting.filter(d => daysSince(d.Modified_Time) > 14);
 
   // Manufacturing sub-buckets
