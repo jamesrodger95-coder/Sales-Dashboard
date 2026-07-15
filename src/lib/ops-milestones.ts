@@ -4,6 +4,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { hasKV, kvGet, kvSet } from './kv-client';
 export type {
   MilestoneEntry, MfgMilestones, DeliveryMilestones, MeasurementFlags,
   MfgSchedulePoint, DeliverySchedulePoint, DeliveryWeekKey, MfgStartDateSource,
@@ -20,7 +21,6 @@ import type { MfgMilestones, DeliveryMilestones, MilestoneEntry, MeasurementFlag
 // One key per deal keeps writes cheap and avoids read-modify-write races.
 // ============================================================================
 
-const hasKV = () => !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 const isVercel = () => !!process.env.VERCEL;
 
 const LOCAL_FILE = path.join(process.cwd(), 'data', 'ops-milestones.json');
@@ -53,34 +53,6 @@ async function writeAllToFile(all: FileShape) {
   const file = activeFile();
   await ensureFile(file);
   await fs.writeFile(file, JSON.stringify(all, null, 2), 'utf-8');
-}
-
-async function kvGet<T>(key: string): Promise<T | null> {
-  const url = process.env.KV_REST_API_URL!;
-  const token = process.env.KV_REST_API_TOKEN!;
-  const res = await fetch(`${url}/get/${key}`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: 'no-store',
-  });
-  if (!res.ok) throw new Error(`KV get failed: ${res.status}`);
-  const data = await res.json();
-  if (!data?.result) return null;
-  try { return JSON.parse(data.result) as T; } catch { return null; }
-}
-
-async function kvSet(key: string, value: unknown): Promise<void> {
-  const url = process.env.KV_REST_API_URL!;
-  const token = process.env.KV_REST_API_TOKEN!;
-  const res = await fetch(`${url}/set/${key}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(value),
-    cache: 'no-store',
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`KV set failed: ${res.status} ${text}`);
-  }
 }
 
 // ============================================================================

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { whatsappHref } from '@/lib/ops-utils';
 
 type Column = 'interested' | 'quoted' | 'deciding' | 'closing';
 const COLUMNS: Column[] = ['interested', 'quoted', 'deciding', 'closing'];
@@ -80,18 +81,116 @@ export default function BoardPage() {
         fetch('/api/board/won').then(r => r.json()),
         fetch('/api/board/lost').then(r => r.json()),
       ]);
-      setActive(Array.isArray(a.cards) ? a.cards : []);
-      setWon(Array.isArray(w.cards) ? w.cards : []);
-      setLost(Array.isArray(l.cards) ? l.cards : []);
+      const activeCards = Array.isArray(a.cards) ? a.cards : [];
+      const wonCards = Array.isArray(w.cards) ? w.cards : [];
+      const lostCards = Array.isArray(l.cards) ? l.cards : [];
+      setActive(activeCards);
+      setWon(wonCards);
+      setLost(lostCards);
+      // Mirror to localStorage as a browser-side backup — survives the server
+      // losing its state (ephemeral /tmp on Vercel between deploys). This is a
+      // safety net; the server / KV remains source of truth on read.
+      try {
+        localStorage.setItem('bd-board-cards', JSON.stringify({
+          active: activeCards, won: wonCards, lost: lostCards,
+          savedAt: new Date().toISOString(),
+        }));
+      } catch { /* quota exceeded or private mode — ignore */ }
     } catch (err) {
       console.error(err);
-      setError('Could not load board.');
+      // Server unreachable — fall back to whatever the browser last saw.
+      try {
+        const raw = localStorage.getItem('bd-board-cards');
+        if (raw) {
+          const cached = JSON.parse(raw);
+          setActive(Array.isArray(cached.active) ? cached.active : []);
+          setWon(Array.isArray(cached.won) ? cached.won : []);
+          setLost(Array.isArray(cached.lost) ? cached.lost : []);
+          setError(`Server unreachable — showing browser backup from ${cached.savedAt ? new Date(cached.savedAt).toLocaleString('en-GB') : 'earlier'}`);
+        } else {
+          setError('Could not load board.');
+        }
+      } catch {
+        setError('Could not load board.');
+      }
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Export all board data as a downloadable JSON file
+  const exportBoard = useCallback(() => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      active,
+      won,
+      lost,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const date = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `bd-board-${date}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [active, won, lost]);
+
+  // Import a backup file — creates new cards (server assigns fresh IDs) so
+  // existing cards aren't disturbed. If James wants a true restore he can
+  // delete active cards first, then import.
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const importBoard = useCallback(async (file: File) => {
+    setError(null);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const cardsToImport: BoardCard[] = [
+        ...(Array.isArray(parsed.active) ? parsed.active : []),
+        ...(Array.isArray(parsed.won) ? parsed.won : []),
+        ...(Array.isArray(parsed.lost) ? parsed.lost : []),
+        ...(Array.isArray(parsed) ? parsed : []),
+      ];
+      if (cardsToImport.length === 0) throw new Error('No cards found in that file.');
+      const confirmed = confirm(`Import ${cardsToImport.length} card(s)? They will be added to the board with fresh IDs (existing cards untouched).`);
+      if (!confirmed) return;
+      // POST each card sequentially — cheap for ~50 cards, avoids overwhelming
+      // the API. Skip Won/Lost outcome flags on import so they land in the
+      // Interested column and James can review before marking outcomes.
+      let ok = 0, failed = 0;
+      for (const c of cardsToImport) {
+        try {
+          const res = await fetch('/api/board', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: c.name,
+              phone: c.phone,
+              email: c.email,
+              country: c.country,
+              frame: c.frame,
+              magnification: c.magnification,
+              px: c.px,
+              headlight: c.headlight,
+              notes: c.notes,
+              column: c.column || 'interested',
+              value: c.value,
+              followUpDate: c.followUpDate,
+            }),
+          });
+          if (res.ok) ok++; else failed++;
+        } catch { failed++; }
+      }
+      await load();
+      alert(`Imported ${ok} card(s). ${failed > 0 ? `${failed} failed — check console.` : ''}`);
+    } catch (err) {
+      setError(`Import failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+    }
+  }, [load]);
 
   const moveTo = async (id: string, col: Column) => {
     // Optimistic update
@@ -193,12 +292,35 @@ export default function BoardPage() {
       <div className="flex items-start sm:items-center justify-between gap-3 mb-4 flex-col sm:flex-row">
         <div>
           <h1 className="text-2xl font-bold text-white tracking-tight">Closing Board</h1>
-          <p className="text-xs text-dim mt-1">Manually curated. Drag cards between columns as deals progress.</p>
+          <p className="text-xs text-gray-400 mt-1">Manually curated. Drag cards between columns as deals progress.</p>
         </div>
-        <button
-          onClick={() => setShowAdd(true)}
-          className="px-4 py-2 rounded-xl bg-white text-black text-sm font-semibold hover:bg-white/90 transition"
-        >+ Add Lead</button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={exportBoard}
+            className="px-3 py-2 rounded-xl text-xs font-medium border border-[#333] text-gray-200 hover:text-white hover:border-[#555] transition"
+            title="Download a JSON backup of every card"
+          >Export Board</button>
+          <button
+            onClick={() => importInputRef.current?.click()}
+            className="px-3 py-2 rounded-xl text-xs font-medium border border-[#333] text-gray-200 hover:text-white hover:border-[#555] transition"
+            title="Restore cards from a JSON backup"
+          >Import Board</button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={e => {
+              const file = e.target.files?.[0];
+              if (file) importBoard(file);
+              e.target.value = ''; // let the user re-select the same file later
+            }}
+          />
+          <button
+            onClick={() => setShowAdd(true)}
+            className="px-4 py-2 rounded-xl bg-white text-black text-sm font-semibold hover:bg-white/90 transition"
+          >+ Add Lead</button>
+        </div>
       </div>
 
       {/* Stats bar */}
@@ -233,10 +355,10 @@ export default function BoardPage() {
             >
               {/* Column header */}
               <div className={`flex items-center justify-between mb-3 pb-2 border-b border-[#1A1A1A] border-l-4 pl-2 ${meta.border}`}>
-                <h3 className="text-[11px] font-bold uppercase tracking-[0.15em] text-white">{meta.label}</h3>
-                <span className="text-[10px] text-dim tabular-nums">{cards.length}</span>
+                <h3 className="text-[11px] font-bold uppercase tracking-[0.15em] text-gray-200">{meta.label}</h3>
+                <span className="text-xs font-semibold text-white bg-white/10 rounded-full px-2 py-0.5 tabular-nums">{cards.length}</span>
               </div>
-              <p className="text-[10px] text-dim mb-2 px-1">{meta.tag}</p>
+              <p className="text-[10px] text-gray-400 mb-2 px-1">{meta.tag}</p>
 
               {loading ? (
                 <div className="space-y-2">
@@ -278,13 +400,13 @@ export default function BoardPage() {
         ) : (
           <div className="space-y-1">
             {won.map(c => (
-              <div key={c.id} className="text-xs text-muted py-2 px-3 border-b border-[#1A1A1A] last:border-0 flex flex-wrap gap-x-3 gap-y-1">
+              <div key={c.id} className="text-xs text-gray-200 py-2 px-3 border-b border-[#1A1A1A] last:border-0 flex flex-wrap gap-x-3 gap-y-1">
                 <span className="text-white font-medium">{c.name}</span>
-                {c.country && <span className="text-dim">{c.country}</span>}
-                {c.magnification.length > 0 && <span className="text-dim">{c.magnification.join(' / ')}</span>}
-                {c.px && <span className="text-dim">PX</span>}
+                {c.country && <span className="text-gray-300">{c.country}</span>}
+                {c.magnification.length > 0 && <span className="text-gray-300">{c.magnification.join(' / ')}</span>}
+                {c.px && <span className="text-gray-300">PX</span>}
                 {typeof c.value === 'number' && c.value > 0 && <span className="text-emerald-400 tabular-nums">{formatGBP(c.value)}</span>}
-                <span className="ml-auto text-dim">Won {c.wonAt ? new Date(c.wonAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''}</span>
+                <span className="ml-auto text-gray-400">Won {c.wonAt ? new Date(c.wonAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''}</span>
               </div>
             ))}
           </div>
@@ -304,12 +426,12 @@ export default function BoardPage() {
         ) : (
           <div className="space-y-1">
             {lost.map(c => (
-              <div key={c.id} className="text-xs text-muted py-2 px-3 border-b border-[#1A1A1A] last:border-0 flex flex-wrap gap-x-3 gap-y-1">
+              <div key={c.id} className="text-xs text-gray-200 py-2 px-3 border-b border-[#1A1A1A] last:border-0 flex flex-wrap gap-x-3 gap-y-1">
                 <span className="text-white font-medium">{c.name}</span>
-                {c.country && <span className="text-dim">{c.country}</span>}
-                {c.magnification.length > 0 && <span className="text-dim">{c.magnification.join(' / ')}</span>}
-                <span className="text-dim">Lost {c.lostAt ? new Date(c.lostAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''}</span>
-                {c.lostReason && <span className="text-dim italic">&ldquo;{c.lostReason}&rdquo;</span>}
+                {c.country && <span className="text-gray-300">{c.country}</span>}
+                {c.magnification.length > 0 && <span className="text-gray-300">{c.magnification.join(' / ')}</span>}
+                <span className="text-gray-400">Lost {c.lostAt ? new Date(c.lostAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''}</span>
+                {c.lostReason && <span className="text-gray-400 italic">&ldquo;{c.lostReason}&rdquo;</span>}
               </div>
             ))}
           </div>
@@ -365,24 +487,33 @@ function Card({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-white truncate">{card.name}</p>
-          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-            {card.phone && (
-              <a
-                href={`tel:${card.phone.replace(/\s/g, '')}`}
-                onClick={stop}
-                className="text-[11px] text-muted hover:text-white font-mono tabular-nums truncate"
-              >{card.phone}</a>
-            )}
-            {card.country && <span className="text-[10px] text-dim">{card.country}</span>}
-            {card.px && <span className="text-[9px] px-1.5 py-0.5 rounded bg-data-blue/20 text-data-blue font-semibold">PX</span>}
+          <p className="text-[15px] font-semibold text-white leading-tight truncate">{card.name}</p>
+          {/* Phone — prominent second line, WhatsApp-tappable */}
+          {card.phone && (
+            <a
+              href={whatsappHref(card.phone) || `tel:${card.phone.replace(/\s/g, '')}`}
+              target={whatsappHref(card.phone) ? '_blank' : undefined}
+              rel="noopener noreferrer"
+              onClick={stop}
+              className="mt-1 inline-flex items-center gap-1.5 text-[13px] font-mono tabular-nums text-[#25D366] hover:text-[#34D399] transition-colors"
+              title="Open in WhatsApp"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.626.712.226 1.36.194 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.488"/>
+              </svg>
+              {card.phone}
+            </a>
+          )}
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            {card.country && <span className="text-[11px] text-gray-300">{card.country}</span>}
+            {card.px && <span className="text-[10px] px-1.5 py-0.5 rounded bg-data-blue/20 text-data-blue font-semibold">PX</span>}
           </div>
         </div>
-        <span className="text-[10px] text-dim opacity-0 group-hover:opacity-100 transition shrink-0">{expanded ? '▴' : '▾'}</span>
+        <span className="text-[10px] text-gray-400 opacity-0 group-hover:opacity-100 transition shrink-0">{expanded ? '▴' : '▾'}</span>
       </div>
 
-      {cfg && <p className="text-[11px] text-muted mt-1.5 truncate">{cfg}</p>}
-      {card.notes && !expanded && <p className="text-[11px] text-dim italic mt-1 line-clamp-2">&ldquo;{card.notes}&rdquo;</p>}
+      {cfg && <p className="text-[12px] text-white mt-2 truncate">{cfg}</p>}
+      {card.notes && !expanded && <p className="text-[11px] text-gray-400 italic mt-1 line-clamp-2">&ldquo;{card.notes}&rdquo;</p>}
 
       {fu && !expanded && (
         <span className={`mt-2 inline-block text-[10px] px-2 py-0.5 rounded-full border ${fu.cls}`}>{fu.text}</span>

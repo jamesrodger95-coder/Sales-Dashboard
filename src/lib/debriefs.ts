@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import { hasKV, kvGet, kvSet } from './kv-client';
 
 export type Frame = 'Rounded' | 'Rectangular' | 'Not Sure';
 export type Magnification = '2.9x' | '3.8x' | '5.7x' | '7.8x' | 'MagniFlex';
@@ -58,7 +59,6 @@ export function magsJoin(d: { magnification?: unknown }, sep = ' / '): string {
 // ============================================================================
 
 const KV_KEY = 'debriefs:all';
-const hasKV = () => !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 const isVercel = () => !!process.env.VERCEL;
 
 const LOCAL_DIR = path.join(process.cwd(), 'data');
@@ -76,38 +76,12 @@ async function ensureFile(file: string): Promise<void> {
   await fs.writeFile(file, '[]', 'utf-8');
 }
 
-async function kvGetAll(): Promise<Debrief[]> {
-  const url = process.env.KV_REST_API_URL!;
-  const token = process.env.KV_REST_API_TOKEN!;
-  const res = await fetch(`${url}/get/${KV_KEY}`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: 'no-store',
-  });
-  if (!res.ok) throw new Error(`KV get failed: ${res.status}`);
-  const data = await res.json();
-  if (!data?.result) return [];
-  try { return JSON.parse(data.result) as Debrief[]; }
-  catch { return []; }
-}
-
-async function kvSetAll(items: Debrief[]): Promise<void> {
-  const url = process.env.KV_REST_API_URL!;
-  const token = process.env.KV_REST_API_TOKEN!;
-  const res = await fetch(`${url}/set/${KV_KEY}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(items),
-    cache: 'no-store',
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`KV set failed: ${res.status} ${text}`);
-  }
-}
-
 export async function readAll(): Promise<Debrief[]> {
   if (hasKV()) {
-    try { return await kvGetAll(); }
+    try {
+      const items = await kvGet<Debrief[]>(KV_KEY);
+      return items || [];
+    }
     catch (err) { console.error('[debriefs] KV read failed, falling back to file:', err); }
   }
   const file = activeFilePath();
@@ -123,7 +97,7 @@ export async function readAll(): Promise<Debrief[]> {
 
 async function writeAll(items: Debrief[]): Promise<void> {
   if (hasKV()) {
-    await kvSetAll(items);
+    await kvSet(KV_KEY, items);
     return;
   }
   const file = activeFilePath();

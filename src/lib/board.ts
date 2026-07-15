@@ -6,6 +6,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { Frame, Magnification, Headlight } from './debriefs';
+import { hasKV, kvGet, kvSet } from './kv-client';
 
 export type BoardColumn = 'interested' | 'quoted' | 'deciding' | 'closing';
 export const COLUMNS: BoardColumn[] = ['interested', 'quoted', 'deciding', 'closing'];
@@ -41,7 +42,6 @@ export interface BoardCard {
 // ============================================================================
 
 const KV_KEY = 'board:all';
-const hasKV = () => !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 const isVercel = () => !!process.env.VERCEL;
 
 const LOCAL_DIR = path.join(process.cwd(), 'data');
@@ -59,38 +59,12 @@ async function ensureFile(file: string): Promise<void> {
   await fs.writeFile(file, '[]', 'utf-8');
 }
 
-async function kvGetAll(): Promise<BoardCard[]> {
-  const url = process.env.KV_REST_API_URL!;
-  const token = process.env.KV_REST_API_TOKEN!;
-  const res = await fetch(`${url}/get/${KV_KEY}`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: 'no-store',
-  });
-  if (!res.ok) throw new Error(`KV get failed: ${res.status}`);
-  const data = await res.json();
-  if (!data?.result) return [];
-  try { return JSON.parse(data.result) as BoardCard[]; }
-  catch { return []; }
-}
-
-async function kvSetAll(items: BoardCard[]): Promise<void> {
-  const url = process.env.KV_REST_API_URL!;
-  const token = process.env.KV_REST_API_TOKEN!;
-  const res = await fetch(`${url}/set/${KV_KEY}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(items),
-    cache: 'no-store',
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`KV set failed: ${res.status} ${text}`);
-  }
-}
-
 export async function readAll(): Promise<BoardCard[]> {
   if (hasKV()) {
-    try { return await kvGetAll(); }
+    try {
+      const items = await kvGet<BoardCard[]>(KV_KEY);
+      return items || [];
+    }
     catch (err) { console.error('[board] KV read failed, falling back to file:', err); }
   }
   const file = activeFilePath();
@@ -105,7 +79,7 @@ export async function readAll(): Promise<BoardCard[]> {
 }
 
 async function writeAll(items: BoardCard[]): Promise<void> {
-  if (hasKV()) { await kvSetAll(items); return; }
+  if (hasKV()) { await kvSet(KV_KEY, items); return; }
   const file = activeFilePath();
   await ensureFile(file);
   await fs.writeFile(file, JSON.stringify(items, null, 2), 'utf-8');
