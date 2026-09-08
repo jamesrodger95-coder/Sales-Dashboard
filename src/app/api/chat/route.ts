@@ -1,7 +1,11 @@
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
+// The text path may make several Claude round-trips (tool call -> data -> answer),
+// so it needs more headroom than the old single-shot route. Voice still answers
+// in one hop and is unaffected.
+export const maxDuration = 60;
 
 import { NextRequest, NextResponse } from 'next/server';
+import Anthropic from '@anthropic-ai/sdk';
 import {
   searchPersonDeep, getTodaySchedule, getTomorrowSchedule,
   getPipelineSummaryText, getManufacturingStatusText, getMonthStats,
@@ -10,6 +14,7 @@ import {
   searchDebriefs, getDebriefFollowUpsText, getDebriefStats,
 } from '@/lib/search';
 import { activeCards, wonThisMonth, lostThisMonth, countByColumn, totalValue, BoardCard } from '@/lib/board';
+import { AGENT_TOOLS, executeAgentTool } from '@/lib/agent-tools';
 
 // ============================================================================
 // Closing Board summary — formatted for chat context
@@ -64,13 +69,15 @@ async function safeFetch(label: string, fn: () => Promise<string>): Promise<{ la
 }
 
 // ============================================================================
-// Always-on context — fetched on every chat turn in parallel
+// Always-on context — VOICE ONLY.
+//
+// Voice has to answer in one breath and one round-trip, so it still gets the
+// full digest up front. Text chat no longer uses this: it calls tools instead,
+// which means a simple "hi" costs zero data fetches rather than nine.
 // ============================================================================
 async function buildFullContext(message: string, now: Date): Promise<string> {
   const nameQuery = extractNameQuery(message);
 
-  // Always-fire fetchers. Every chat turn gets the full picture; routing
-  // is now about ENRICHING context, not gating it.
   const coreFetchers: Array<[string, () => Promise<string>]> = [
     ["TODAY'S SCHEDULE",       () => getTodaySchedule()],
     ["TOMORROW'S SCHEDULE",    () => getTomorrowSchedule()],
@@ -104,9 +111,6 @@ async function buildFullContext(message: string, now: Date): Promise<string> {
     enrich.push(['MONTH-OVER-MONTH', () => getMonthComparison(now.getFullYear(), now.getMonth(), lm.getFullYear(), lm.getMonth())]);
   }
 
-  // Person search — always run if we can extract a meaningful name query.
-  // Cheap to run, gives Claude direct hits when James asks "find X" or
-  // mentions a name mid-sentence.
   if (nameQuery.length > 2) {
     enrich.push([`PERSON SEARCH: "${nameQuery}"`, () => searchPersonDeep(nameQuery)]);
     enrich.push([`DEBRIEFS: "${nameQuery}"`,      () => searchDebriefs(nameQuery)]);
@@ -126,8 +130,6 @@ async function buildFullContext(message: string, now: Date): Promise<string> {
 // ============================================================================
 const BASE_RULES = `You are Jarvis, James Rodger's AI sales assistant at Bryant Dental. You are an expert in dental loupes, sales, and CRM data analysis.
 
-You have FULL access to James's data — it is provided below as [DATA] sections. Use it. Calculate. Spot patterns. Compare. Draw conclusions.
-
 PRODUCT KNOWLEDGE:
 - Refractive Pro with MagniTech: removable scope loupes, 31-36g titanium, world's lightest
 - Magnifications: 2.9x (130mm FOV), 3.8x (100mm FOV), 5.7x (60mm FOV), 7.8x (45mm FOV)
@@ -141,8 +143,6 @@ RULES:
 - Be short and snappy. Max 3-4 sentences for simple questions. Max 6-8 lines for complex ones.
 - Lead with the answer, not the context.
 - Use specific numbers, names, and dates from the data.
-- For questions about a person, search every [DATA] section for their name and synthesize.
-- For "compare" / "vs" / "trend" questions, calculate from the data and draw a conclusion.
 - You can do math, percentages, ratios, comparisons.
 - End with a short follow-up offer when useful: "Want details?" / "Want the full list?"
 
@@ -154,11 +154,24 @@ NEVER say any of these phrases:
 - "As an AI, I..."
 - "I apologise but..."
 
-If something specific is missing from the [DATA], say exactly what's missing — e.g. "No leads from Japan in this month's data" — not a generic "I couldn't analyse that." If the data is there but doesn't answer the question, say "No matches for X in this month's records — want me to look back further?"
+If the data genuinely doesn't contain the answer, say exactly what's missing — e.g. "No leads from Japan this month" — never a generic "I couldn't analyse that."
 
 You are Claude-level intelligent. Think deeply, give the best possible answer.`;
 
 const TEXT_SYSTEM = `${BASE_RULES}
+
+YOU HAVE TOOLS. Use them — do not guess, and do not claim you lack access.
+- Questions about who is at a stage ("awaiting measurement", "in manufacturing", "gone cold") -> list_deals / list_leads.
+- Questions about meeting volume or calendar colours ("how many green events in the last 30 days") -> query_calendar.
+- Questions about one named person -> search_person.
+- Broad "how is the month going" questions -> get_summary.
+Call several tools at once when the question needs more than one. If a first
+lookup comes back empty, try a broader filter before concluding there's nothing.
+
+IMPORTANT on calendar colours: Google has no single "green" — sage is the pale
+green and basil the dark one, and query_calendar counts both when asked for
+green. Events with no colour set report as "default". If James asks about a
+colour he has none of, say so and tell him which colours he IS using.
 
 FORMATTING (text chat):
 - Compact data: "Website: 12 | Ads: 8 | Instagram: 6"
@@ -175,6 +188,94 @@ FORMATTING (voice — spoken aloud):
 - Address James directly: "You have...", "Your first call..."
 - For phone numbers, say "I'll display the number" — don't read digits out loud.
 - If a list has more than 5 items, give top 3 and say "plus two more".`;
+
+// Model for the text agent. Voice stays on its existing model — it is tuned for
+// one-shot latency, and a tool loop would make it feel sluggish.
+const TEXT_MODEL = 'claude-opus-5';
+const VOICE_MODEL = 'claude-sonnet-4-6';
+
+// How many times Claude may call tools before we force it to answer. Five is
+// enough for "look it up, then cross-check" without risking the 60s ceiling.
+const MAX_TOOL_ROUNDS = 5;
+
+interface HistoryTurn { role: string; content: string }
+
+// ============================================================================
+// Text path — agentic loop
+// ============================================================================
+async function runTextAgent(
+  client: Anthropic,
+  message: string,
+  history: HistoryTurn[],
+  dateLine: string,
+  now: Date,
+): Promise<{ reply: string; toolsUsed: string[] }> {
+  const messages: Anthropic.MessageParam[] = [
+    ...history.slice(-8).map(h => ({
+      role: h.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+      content: h.content,
+    })),
+    { role: 'user', content: `[DATE: ${dateLine}]\n\n${message}` },
+  ];
+
+  const toolsUsed: string[] = [];
+
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+    const lastRound = round === MAX_TOOL_ROUNDS;
+
+    const response = await client.messages.create({
+      model: TEXT_MODEL,
+      max_tokens: 4000,
+      system: TEXT_SYSTEM,
+      // Medium effort keeps a phone-sized chat responsive; the tools do the
+      // heavy lifting, so the model rarely needs to reason for long.
+      output_config: { effort: 'medium' },
+      // On the final round drop the tools entirely so Claude must answer from
+      // what it already has rather than asking for another lookup it can't get.
+      ...(lastRound ? {} : { tools: AGENT_TOOLS }),
+      messages,
+    });
+
+    if (response.stop_reason !== 'tool_use') {
+      const text = response.content
+        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+        .map(b => b.text)
+        .join('\n')
+        .trim();
+      return { reply: text, toolsUsed };
+    }
+
+    const toolCalls = response.content.filter(
+      (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
+    );
+    messages.push({ role: 'assistant', content: response.content });
+
+    // Run every requested tool in parallel, then return all results in a single
+    // user message — splitting them teaches the model to stop batching calls.
+    const results = await Promise.all(
+      toolCalls.map(async (call): Promise<Anthropic.ToolResultBlockParam> => {
+        toolsUsed.push(call.name);
+        try {
+          const out = await executeAgentTool(call.name, call.input, now);
+          return { type: 'tool_result', tool_use_id: call.id, content: out || '(no results)' };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'unknown error';
+          console.error(`[Chat] tool ${call.name} failed:`, msg);
+          return {
+            type: 'tool_result',
+            tool_use_id: call.id,
+            content: `Tool failed: ${msg}`,
+            is_error: true,
+          };
+        }
+      }),
+    );
+
+    messages.push({ role: 'user', content: results });
+  }
+
+  return { reply: '', toolsUsed };
+}
 
 // ============================================================================
 // Route
@@ -195,62 +296,50 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const now = new Date();
     const dateLine = now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
-    // Always-on full context. Per-fetcher errors leave "DATA UNAVAILABLE"
-    // markers in place rather than crashing the whole turn.
+    // ---- Text: agentic, tool-driven ----------------------------------------
+    if (!voice) {
+      const { reply, toolsUsed } = await runTextAgent(client, message, history as HistoryTurn[], dateLine, now);
+      if (toolsUsed.length) console.log(`[Chat] tools used: ${toolsUsed.join(', ')}`);
+      if (!reply) {
+        return NextResponse.json(
+          { reply: 'I ran out of lookups before I could answer that. Try narrowing the question.' },
+          { status: 502 },
+        );
+      }
+      return NextResponse.json({ reply, toolsUsed });
+    }
+
+    // ---- Voice: unchanged single-shot digest --------------------------------
     const context = await buildFullContext(message, now);
+    const userContent = `[DATE: ${dateLine}]\n\n[DATA]\n${context}\n\n[QUESTION]\n${message}`;
 
-    const userContent = `[DATE: ${dateLine}]
-
-[DATA]
-${context}
-
-[QUESTION]
-${message}`;
-
-    const messages = [
-      ...history.slice(-8).map((h: { role: string; content: string }) => ({ role: h.role, content: h.content })),
-      { role: 'user' as const, content: userContent },
+    const messages: Anthropic.MessageParam[] = [
+      ...(history as HistoryTurn[]).slice(-8).map(h => ({
+        role: h.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+        content: h.content,
+      })),
+      { role: 'user', content: userContent },
     ];
 
-    const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: voice ? 400 : 1000,
-        system: voice ? VOICE_SYSTEM : TEXT_SYSTEM,
-        messages,
-      }),
+    const response = await client.messages.create({
+      model: VOICE_MODEL,
+      max_tokens: 400,
+      system: VOICE_SYSTEM,
+      messages,
     });
 
-    if (!claudeRes.ok) {
-      const errBody = await claudeRes.text();
-      console.error('[Chat] Claude API error', claudeRes.status, errBody);
-      return NextResponse.json(
-        { reply: `Claude API error ${claudeRes.status}: ${errBody.slice(0, 300)}` },
-        { status: 502 },
-      );
-    }
+    const reply = response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map(b => b.text)
+      .join('\n')
+      .trim();
 
-    const data = await claudeRes.json();
-    if (data?.error) {
-      console.error('[Chat] Claude returned error object', data.error);
-      return NextResponse.json(
-        { reply: `Claude returned an error: ${data.error.message || JSON.stringify(data.error).slice(0, 300)}` },
-        { status: 502 },
-      );
-    }
-
-    const reply = data?.content?.[0]?.text;
     if (!reply) {
-      console.error('[Chat] No reply text in Claude response', JSON.stringify(data).slice(0, 500));
+      console.error('[Chat] No reply text in Claude response');
       return NextResponse.json(
         { reply: 'Claude returned an empty response. Try rephrasing the question.' },
         { status: 502 },
@@ -259,11 +348,18 @@ ${message}`;
 
     return NextResponse.json({ reply });
   } catch (error: unknown) {
+    if (error instanceof Anthropic.RateLimitError) {
+      return NextResponse.json({ reply: 'Rate limited by the Claude API — give it a moment and ask again.' }, { status: 429 });
+    }
+    if (error instanceof Anthropic.AuthenticationError) {
+      return NextResponse.json({ reply: 'The Anthropic API key was rejected. Check ANTHROPIC_API_KEY.' }, { status: 401 });
+    }
+    if (error instanceof Anthropic.APIError) {
+      console.error('[Chat] Claude API error', error.status, error.message);
+      return NextResponse.json({ reply: `Claude API error ${error.status}: ${error.message}` }, { status: 502 });
+    }
     const msg = error instanceof Error ? error.message : String(error);
     console.error('[Chat] Unhandled error:', error);
-    return NextResponse.json(
-      { reply: `Chat route crashed: ${msg}` },
-      { status: 500 },
-    );
+    return NextResponse.json({ reply: `Chat route crashed: ${msg}` }, { status: 500 });
   }
 }

@@ -57,6 +57,39 @@ export interface CalendarEvent {
   description?: string;
   status?: string;
   htmlLink?: string;
+  colorId?: string;   // Google's per-event colour override; absent = calendar default
+  colour?: string;    // Human name for colorId, e.g. "sage" — see EVENT_COLOURS
+}
+
+// Google Calendar's fixed event palette. The API only ever returns the numeric
+// colorId, so we map it to the names James actually sees in the UI. An event
+// with no colorId inherits the calendar's default colour and is reported as
+// "default" rather than guessed at.
+export const EVENT_COLOURS: Record<string, string> = {
+  '1': 'lavender', '2': 'sage',     '3': 'grape',  '4': 'flamingo',
+  '5': 'banana',   '6': 'tangerine', '7': 'peacock', '8': 'graphite',
+  '9': 'blueberry', '10': 'basil',  '11': 'tomato',
+};
+
+// "Green" is ambiguous in Google's palette — sage is the pale green, basil the
+// dark one. Asking for green matches both; asking for either by name is exact.
+export const COLOUR_ALIASES: Record<string, string[]> = {
+  green: ['sage', 'basil'],
+  red: ['tomato', 'flamingo'],
+  blue: ['peacock', 'blueberry'],
+  purple: ['lavender', 'grape'],
+  yellow: ['banana'],
+  orange: ['tangerine'],
+  grey: ['graphite'],
+  gray: ['graphite'],
+};
+
+// Resolve a user-supplied colour word to the set of palette names it covers.
+export function resolveColourNames(input: string): string[] {
+  const key = input.trim().toLowerCase();
+  if (COLOUR_ALIASES[key]) return COLOUR_ALIASES[key];
+  if (Object.values(EVENT_COLOURS).includes(key)) return [key];
+  return [];
 }
 
 const PHONE_REGEX = /(\+?\d[\d\s\-().]{7,}\d)/g;
@@ -342,6 +375,7 @@ interface GCalEvent {
   end?: { dateTime?: string; date?: string };
   attendees?: { email?: string; displayName?: string; responseStatus?: string }[];
   location?: string; description?: string; status?: string; htmlLink?: string;
+  colorId?: string;
 }
 
 function parseEvents(items: GCalEvent[]): CalendarEvent[] {
@@ -358,6 +392,8 @@ function parseEvents(items: GCalEvent[]): CalendarEvent[] {
     description: event.description || undefined,
     status: event.status || undefined,
     htmlLink: event.htmlLink || undefined,
+    colorId: event.colorId || undefined,
+    colour: event.colorId ? (EVENT_COLOURS[event.colorId] || `colour-${event.colorId}`) : 'default',
   }));
 }
 
