@@ -213,7 +213,10 @@ export async function generateWeeklyReport(weekParam?: string) {
   }};
 }
 
-export async function sendGmailEmail(to: string, cc: string, subject: string, body: string): Promise<boolean> {
+// `html` is optional. When supplied the message goes out as multipart/alternative
+// so clients that render HTML get the rich version and everything else falls
+// back to `body`. Existing callers that pass four arguments are unaffected.
+export async function sendGmailEmail(to: string, cc: string, subject: string, body: string, html?: string): Promise<boolean> {
   try {
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST', cache: 'no-store',
@@ -230,15 +233,39 @@ export async function sendGmailEmail(to: string, cc: string, subject: string, bo
 
     // Plain ASCII subject, UTF-8 body
     const asciiSubject = subject.replace(/[^\x20-\x7E]/g, '-');
-    const mime = [
-      `To: ${to}`, `Cc: ${cc}`,
-      `Subject: ${asciiSubject}`,
-      'MIME-Version: 1.0',
-      'Content-Type: text/plain; charset=UTF-8',
-      'Content-Transfer-Encoding: base64',
-      '',
-      Buffer.from(body, 'utf-8').toString('base64'),
-    ].join('\r\n');
+
+    const headers = [`To: ${to}`, `Cc: ${cc}`, `Subject: ${asciiSubject}`, 'MIME-Version: 1.0'];
+
+    let mime: string;
+    if (html) {
+      const boundary = `bd_${Date.now().toString(36)}`;
+      mime = [
+        ...headers,
+        `Content-Type: multipart/alternative; boundary="${boundary}"`,
+        '',
+        `--${boundary}`,
+        'Content-Type: text/plain; charset=UTF-8',
+        'Content-Transfer-Encoding: base64',
+        '',
+        Buffer.from(body, 'utf-8').toString('base64'),
+        '',
+        `--${boundary}`,
+        'Content-Type: text/html; charset=UTF-8',
+        'Content-Transfer-Encoding: base64',
+        '',
+        Buffer.from(html, 'utf-8').toString('base64'),
+        '',
+        `--${boundary}--`,
+      ].join('\r\n');
+    } else {
+      mime = [
+        ...headers,
+        'Content-Type: text/plain; charset=UTF-8',
+        'Content-Transfer-Encoding: base64',
+        '',
+        Buffer.from(body, 'utf-8').toString('base64'),
+      ].join('\r\n');
+    }
 
     const encoded = Buffer.from(mime).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 
