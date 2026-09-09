@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Run with: node scripts/refresh-google-token.mjs
 //
-// Re-authorizes Google Calendar access and prints a fresh GOOGLE_REFRESH_TOKEN.
+// Re-authorizes Google Calendar + Gmail send access and prints a fresh
+// GOOGLE_REFRESH_TOKEN.
 // Why this exists: refresh tokens silently expire when access is revoked, the password
 // changes, or the token goes unused — when that happens, every calendar call fails with
 // invalid_grant. There is no API to fix this; you have to grant consent in a browser.
@@ -19,7 +20,15 @@ import { join } from 'node:path';
 
 const PORT = 8765;
 const REDIRECT = `http://localhost:${PORT}/oauth2callback`;
-const SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
+// Calendar read is what the dashboard runs on; gmail.send is what the report
+// crons need. The original token was minted with calendar only, so every
+// sendGmailEmail() call returned 403 ACCESS_TOKEN_SCOPE_INSUFFICIENT and the
+// emails silently never arrived. Both scopes are requested together so one
+// re-auth fixes reading the calendar and sending the reports.
+const SCOPE = [
+  'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/gmail.send',
+].join(' ');
 
 function loadEnv() {
   try {

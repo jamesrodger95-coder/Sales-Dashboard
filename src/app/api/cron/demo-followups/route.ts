@@ -56,12 +56,16 @@ export async function GET(request: NextRequest) {
 
     console.log(`[Cron DemoFollowUps] ${sent ? 'sent' : 'FAILED'} to ${to} — ${report.fresh.length} fresh, ${report.ageing.length} ageing`);
 
+    // Report a failed send as an actual failure. Returning 200 with
+    // emailSent:false is how a broken mail path stays invisible — the cron
+    // looks green in Vercel while no email ever arrives.
     return NextResponse.json({
-      success: true, emailSent: sent, to, cc,
+      success: sent, emailSent: sent, to, cc,
       subject: report.subject,
       fresh: report.fresh.length, ageing: report.ageing.length,
       noPhone: report.skippedNoPhone,
-    });
+      ...(sent ? {} : { error: 'Gmail send failed — check server logs (commonly missing gmail.send scope on GOOGLE_REFRESH_TOKEN)' }),
+    }, { status: sent ? 200 : 502 });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Cron failed';
     console.error('[Cron DemoFollowUps]', error);
